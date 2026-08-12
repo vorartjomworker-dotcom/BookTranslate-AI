@@ -15,6 +15,7 @@ from app.models.model_run import ModelRun
 from app.models.prompt_version import PromptVersion
 from app.models.segment import Segment
 from app.models.translation import Translation
+from app.models.translation_memory import TranslationMemoryEntry
 from app.models.translation_qa_result import TranslationQAResult
 from app.models.translation_version import TranslationVersion
 from app.services.context_builder import build_translation_context
@@ -237,6 +238,24 @@ async def evaluate_translation_version(
         "qa_score": aggregate,
         "qa_verdict": verdict_for_score(aggregate),
     }
+
+    memory_rows = list(
+        (
+            await db.execute(
+                select(TranslationMemoryEntry).where(
+                    TranslationMemoryEntry.origin_translation_version_id == version.id
+                )
+            )
+        ).scalars().all()
+    )
+    for memory in memory_rows:
+        memory.quality_score = aggregate
+        memory.metadata_json = {
+            **dict(memory.metadata_json or {}),
+            "qa_score": aggregate,
+            "qa_verdict": verdict_for_score(aggregate),
+        }
+
     await db.commit()
     await db.refresh(version)
     return aggregate, results
