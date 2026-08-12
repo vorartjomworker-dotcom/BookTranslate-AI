@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +34,7 @@ class QAEvaluatorRequest(BaseModel):
 class TranslationJobCreate(BaseModel):
     target_language: str | None = None
     stages: list[StageRequest]
-    qa_evaluators: list[QAEvaluatorRequest] = []
+    qa_evaluators: list[QAEvaluatorRequest] = Field(default_factory=list)
     force: bool = False
     max_retries: int = Field(default=2, ge=0, le=10)
     stop_on_error: bool = False
