@@ -38,3 +38,15 @@ class Book(Base, TimestampMixin):
         order_by="Asset.position",
         passive_deletes=True,
     )
+    glossary_terms = relationship(
+        "GlossaryTerm",
+        back_populates="book",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    translation_memory_entries = relationship(
+        "TranslationMemoryEntry",
+        back_populates="book",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
