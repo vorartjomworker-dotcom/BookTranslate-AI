@@ -153,7 +153,7 @@ From `backend/`:
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q
+python -m pytest -q
 ```
 
 ## Stop
