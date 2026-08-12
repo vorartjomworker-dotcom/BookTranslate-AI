@@ -21,6 +21,17 @@ class NormalizedBlock:
 
 
 @dataclass(slots=True)
+class NormalizedAsset:
+    position: int
+    asset_type: str = "image"
+    original_filename: str | None = None
+    media_type: str | None = None
+    data: bytes = b""
+    sha256: str = ""
+    metadata_json: dict = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class NormalizedChapter:
     title: str | None = None
     paragraphs: list[str] = field(default_factory=list)
@@ -42,6 +53,7 @@ class NormalizedChapter:
 class NormalizedDocument:
     title: str | None = None
     chapters: list[NormalizedChapter] = field(default_factory=list)
+    assets: list[NormalizedAsset] = field(default_factory=list)
 
 
 def parse_document(path: Path, file_format: str) -> NormalizedDocument:
