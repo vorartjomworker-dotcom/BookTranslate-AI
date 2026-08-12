@@ -3,12 +3,38 @@ from pathlib import Path
 
 
 @dataclass(slots=True)
+class NormalizedSection:
+    position: int
+    level: int
+    title: str
+    parent_position: int | None = None
+    metadata_json: dict = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class NormalizedBlock:
+    position: int
+    block_type: str
+    source_text: str | None = None
+    section_position: int | None = None
+    metadata_json: dict = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class NormalizedChapter:
     title: str | None = None
     paragraphs: list[str] = field(default_factory=list)
+    sections: list[NormalizedSection] = field(default_factory=list)
+    blocks: list[NormalizedBlock] = field(default_factory=list)
 
     @property
     def source_text(self) -> str:
+        if self.blocks:
+            return "\n\n".join(
+                block.source_text
+                for block in self.blocks
+                if block.source_text and block.block_type != "heading"
+            )
         return "\n\n".join(self.paragraphs)
 
 
