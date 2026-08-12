@@ -33,8 +33,8 @@ async def liveness() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/health")
-async def health() -> dict[str, object] | JSONResponse:
+@app.get("/health", response_model=None)
+async def health():
     database_ok = False
     redis_ok = False
 
