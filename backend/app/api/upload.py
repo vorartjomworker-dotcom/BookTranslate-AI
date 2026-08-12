@@ -7,8 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db import get_db
+from app.models.block import Block
 from app.models.book import Book
 from app.models.chapter import Chapter
+from app.models.section import Section
 from app.models.segment import Segment
 from app.services.document_parser import parse_document
 from app.services.segmentation import segment_chapter
@@ -24,6 +26,8 @@ class UploadResponse(BaseModel):
     title: str
     status: str
     chapters: int
+    sections: int
+    blocks: int
     segments: int
     original_filename: str
     file_format: str
@@ -97,6 +101,8 @@ async def upload_book(
     db.add(book)
 
     chapter_count = 0
+    section_count = 0
+    block_count = 0
     segment_count = 0
 
     try:
@@ -113,21 +119,73 @@ async def upload_book(
             await db.flush()
             chapter_count += 1
 
+            section_models: dict[int, Section] = {}
+            for normalized_section in normalized_chapter.sections:
+                parent = (
+                    section_models.get(normalized_section.parent_position)
+                    if normalized_section.parent_position is not None
+                    else None
+                )
+                section = Section(
+                    chapter_id=chapter.id,
+                    parent_section_id=parent.id if parent else None,
+                    position=normalized_section.position,
+                    level=normalized_section.level,
+                    title=normalized_section.title,
+                    metadata_json=normalized_section.metadata_json,
+                )
+                db.add(section)
+                await db.flush()
+                section_models[normalized_section.position] = section
+                section_count += 1
+
+            paragraph_blocks: dict[int, Block] = {}
+            paragraph_index = 0
+            for normalized_block in normalized_chapter.blocks:
+                section = (
+                    section_models.get(normalized_block.section_position)
+                    if normalized_block.section_position is not None
+                    else None
+                )
+                block = Block(
+                    chapter_id=chapter.id,
+                    section_id=section.id if section else None,
+                    position=normalized_block.position,
+                    block_type=normalized_block.block_type,
+                    source_text=normalized_block.source_text,
+                    metadata_json=normalized_block.metadata_json,
+                )
+                db.add(block)
+                await db.flush()
+                block_count += 1
+
+                if normalized_block.block_type != "heading" and normalized_block.source_text:
+                    paragraph_blocks[paragraph_index] = block
+                    paragraph_index += 1
+
             drafts = segment_chapter(normalized_chapter)
-            db.add_all(
-                [
+            segment_models: list[Segment] = []
+            for draft in drafts:
+                paragraph_index_value = draft.metadata_json.get("paragraph_index")
+                source_block = (
+                    paragraph_blocks.get(paragraph_index_value)
+                    if isinstance(paragraph_index_value, int)
+                    else None
+                )
+                segment_models.append(
                     Segment(
                         chapter_id=chapter.id,
+                        block_id=source_block.id if source_block else None,
                         position=draft.position,
                         segment_type=draft.segment_type,
                         source_text=draft.source_text,
                         source_hash=draft.source_hash,
                         metadata_json=draft.metadata_json,
                     )
-                    for draft in drafts
-                ]
-            )
-            segment_count += len(drafts)
+                )
+
+            db.add_all(segment_models)
+            segment_count += len(segment_models)
 
         book.status = "segmented"
         await db.commit()
@@ -142,6 +200,8 @@ async def upload_book(
         title=book.title,
         status=book.status,
         chapters=chapter_count,
+        sections=section_count,
+        blocks=block_count,
         segments=segment_count,
         original_filename=original_filename,
         file_format=book.file_format or suffix.lstrip("."),
