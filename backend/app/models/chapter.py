@@ -27,6 +27,20 @@ class Chapter(Base, TimestampMixin):
     source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     book = relationship("Book", back_populates="chapters")
+    sections = relationship(
+        "Section",
+        back_populates="chapter",
+        cascade="all, delete-orphan",
+        order_by="Section.position",
+        passive_deletes=True,
+    )
+    blocks = relationship(
+        "Block",
+        back_populates="chapter",
+        cascade="all, delete-orphan",
+        order_by="Block.position",
+        passive_deletes=True,
+    )
     segments = relationship(
         "Segment",
         back_populates="chapter",
