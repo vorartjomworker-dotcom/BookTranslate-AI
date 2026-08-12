@@ -26,8 +26,10 @@ def test_structured_epub_parser_preserves_sections_and_blocks(tmp_path: Path) ->
     )
 
     book.add_item(chapter)
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
     book.toc = (chapter,)
-    book.spine = [chapter]
+    book.spine = ["nav", chapter]
     epub.write_epub(str(path), book)
 
     parsed = parse_epub(path)
