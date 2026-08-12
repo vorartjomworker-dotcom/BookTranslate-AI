@@ -14,15 +14,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("booktranslate.translation_worker")
 
 
-async def run_worker() -> None:
-    gateway = ModelGateway.from_settings(settings)
+async def _recover() -> int:
     async with AsyncSessionLocal() as db:
-        recovered = await recover_jobs(
+        return await recover_jobs(
             db,
             queue_name=settings.translation_queue_name,
             stale_after_seconds=settings.translation_job_recovery_age_seconds,
         )
-        logger.info("Recovered %s translation jobs", recovered)
+
+
+async def run_worker() -> None:
+    gateway = ModelGateway.from_settings(settings)
+    logger.info("Recovered %s translation jobs", await _recover())
 
     while True:
         job_id = await dequeue_job(
@@ -30,6 +33,9 @@ async def run_worker() -> None:
             timeout_seconds=settings.translation_worker_poll_seconds,
         )
         if job_id is None:
+            recovered = await _recover()
+            if recovered:
+                logger.info("Recovered %s stale/queued translation jobs", recovered)
             continue
         logger.info("Processing translation job %s", job_id)
         try:
