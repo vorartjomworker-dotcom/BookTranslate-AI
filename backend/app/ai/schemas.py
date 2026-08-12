@@ -6,7 +6,7 @@ class ModelRequest:
     model: str
     system_prompt: str
     user_prompt: str
-    temperature: float | None = 0.2
+    temperature: float | None = None
     max_output_tokens: int | None = 4000
     metadata: dict = field(default_factory=dict)
 

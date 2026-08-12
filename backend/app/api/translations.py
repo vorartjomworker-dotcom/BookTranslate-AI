@@ -1,4 +1,5 @@
 import uuid
+from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -52,7 +53,7 @@ class GenerateRequest(BaseModel):
     model: str
     target_language: str = Field(default="ru", min_length=2, max_length=20)
     role: str = "translator"
-    temperature: float | None = 0.2
+    temperature: float | None = None
     max_output_tokens: int | None = 4000
     finalize: bool = False
 
@@ -61,7 +62,7 @@ class PipelineStageRequest(BaseModel):
     provider: str
     model: str
     role: str
-    temperature: float | None = 0.2
+    temperature: float | None = None
     max_output_tokens: int | None = 4000
 
 
@@ -128,8 +129,8 @@ async def translation_context(
         "source_text": context.source_text,
         "previous_segments": context.previous_segments,
         "next_segments": context.next_segments,
-        "glossary": [item.__dict__ for item in context.glossary],
-        "memory_matches": [item.__dict__ for item in context.memory_matches],
+        "glossary": [asdict(item) for item in context.glossary],
+        "memory_matches": [asdict(item) for item in context.memory_matches],
     }
 
 

@@ -27,7 +27,7 @@ class ModelStage:
     provider: str
     model: str
     role: str
-    temperature: float | None = 0.2
+    temperature: float | None = None
     max_output_tokens: int | None = 4000
 
 
@@ -37,6 +37,9 @@ async def get_or_create_translation(
     segment_id: uuid.UUID,
     target_language: str,
 ) -> Translation:
+    if await db.get(Segment, segment_id) is None:
+        raise LookupError("Segment not found")
+
     result = await db.execute(
         select(Translation).where(
             Translation.segment_id == segment_id,
