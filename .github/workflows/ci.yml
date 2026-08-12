@@ -16,6 +16,8 @@ jobs:
         working-directory: backend
     env:
       DATABASE_URL: postgresql+asyncpg://booktranslate:booktranslate@localhost:5432/booktranslate
+      UPLOAD_DIR: /tmp/booktranslate-uploads
+      RUN_DB_INTEGRATION: "1"
 
     services:
       postgres:
