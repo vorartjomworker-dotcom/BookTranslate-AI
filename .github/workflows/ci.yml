@@ -14,8 +14,8 @@ jobs:
         working-directory: backend
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -24,7 +24,21 @@ jobs:
             backend/requirements-dev.txt
       - run: pip install -r requirements-dev.txt
       - run: python -m compileall app alembic tests
-      - run: pytest -q
+      - name: Run backend tests
+        shell: bash
+        run: |
+          set +e
+          pytest -q --tb=short 2>&1 | tee pytest-output.txt
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            {
+              echo "### Backend pytest failure"
+              echo '```text'
+              cat pytest-output.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$code"
 
   frontend:
     runs-on: ubuntu-latest
@@ -33,8 +47,8 @@ jobs:
         working-directory: frontend
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
