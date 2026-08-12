@@ -39,6 +39,13 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$code"
+      - name: Upload pytest output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-pytest-output
+          path: backend/pytest-output.txt
+          if-no-files-found: error
 
   frontend:
     runs-on: ubuntu-latest
