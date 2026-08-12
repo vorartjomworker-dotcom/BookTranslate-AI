@@ -1,23 +1,22 @@
 # BookTranslate AI
 
-AI-powered platform for technical book translation with structured document processing and a future multi-model QA pipeline.
+AI-powered platform for structured technical-book translation with persistent document reconstruction, translation memory and provider-neutral AI orchestration.
 
 ## Current status
 
 ### Stage 1 — Infrastructure ✅
 
-Implemented:
-
 - Next.js + TypeScript frontend
 - FastAPI backend
-- PostgreSQL database
-- Redis cache/queue foundation
-- Docker Compose development environment
-- PostgreSQL and Redis readiness checks
+- PostgreSQL
+- Redis foundation
+- Docker Compose
+- readiness/liveness checks
+- GitHub Actions CI
 
 ### Stage 2 — Document Engine V1 ✅
 
-The persistent document model is now:
+Persistent document model:
 
 ```text
 Book
@@ -34,105 +33,126 @@ Book
 
 Implemented:
 
-- async SQLAlchemy sessions and Alembic migrations
-- `Book`, `Chapter`, `Section`, `Block`, `Segment`
-- `Asset`, `Figure`, `DocumentTable`, `Caption`
-- persistent source-file and extracted-asset storage
-- EPUB and DOCX upload/parsing
-- chapter and section hierarchy
-- ordered document blocks
-- paragraph, list-item, code and blockquote classification
-- table extraction with cell structure
-- image extraction and SHA-256 asset identity
-- figure/caption relationships
-- deterministic translation segments with source hashes
-- Books API and upload API
-- Reconstruction Engine V1 for DOCX
-- DOCX export from persisted PostgreSQL state
-- PostgreSQL migration validation in CI
-- parser/reconstruction tests
-- database end-to-end round-trip test
-- frontend production build gate
+- DOCX and EPUB upload/parsing
+- chapter/section hierarchy
+- ordered paragraphs, lists, code and blockquotes
+- tables, images/assets and captions
+- deterministic segment SHA-256 hashes
+- PostgreSQL persistence
+- source DOCX Reconstruction Engine V1
+- `GET /api/books/{book_id}/export/docx`
+- parser/reconstruction and PostgreSQL round-trip tests
 
-AI model integration remains intentionally deferred until the document workflow is stable enough for translation orchestration.
+### Stage 3 — Translation Engine V1
+
+Translation model:
+
+```text
+Segment
+└── Translation (per target language)
+    ├── TranslationVersion 1 — translator
+    ├── TranslationVersion 2 — reviewer
+    ├── TranslationVersion 3 — critic/finalizer
+    └── selected final version
+
+ModelRun -> provider/model/prompt/tokens/latency/output/error
+PromptVersion -> versioned system prompt + template
+Book -> GlossaryTerm
+Book -> TranslationMemoryEntry
+```
+
+Implemented on the translation-engine branch:
+
+- persistent `Translation` and immutable-style `TranslationVersion` history
+- `ModelRun` audit trail for model/provider calls
+- versioned `PromptVersion`
+- per-book glossary/terminology
+- exact-hash Translation Memory with approved final translations
+- Context Builder with neighbouring source segments, glossary and Translation Memory
+- provider-neutral `ModelGateway`
+- OpenAI adapter using the Responses API
+- Kimi adapter using OpenAI-compatible chat completions
+- Gemini adapter using the Interactions API
+- AITUNNEL adapter using OpenAI-compatible chat completions
+- configurable translator/reviewer/critic/finalizer pipeline
+- finalization updates the compatibility `Segment.translated_text` field and writes the approved result into Translation Memory
+- provider HTTP tests with mocked transports: no real API keys are required in CI
+- PostgreSQL integration test for translation versioning, model runs, finalization and Translation Memory
 
 ## Project structure
 
 ```text
 BookTranslate-AI/
 ├── backend/
-│   ├── alembic/
-│   │   └── versions/
+│   ├── alembic/versions/
 │   ├── app/
+│   │   ├── ai/
+│   │   │   ├── gateway.py
+│   │   │   ├── schemas.py
+│   │   │   └── providers/
+│   │   │       ├── openai.py
+│   │   │       ├── kimi.py
+│   │   │       ├── gemini.py
+│   │   │       └── aitunnel.py
 │   │   ├── api/
 │   │   │   ├── books.py
 │   │   │   ├── upload.py
-│   │   │   └── export.py
-│   │   ├── core/
-│   │   │   └── config.py
+│   │   │   ├── export.py
+│   │   │   ├── glossary.py
+│   │   │   ├── translations.py
+│   │   │   └── ai.py
 │   │   ├── models/
-│   │   │   ├── asset.py
-│   │   │   ├── base.py
-│   │   │   ├── block.py
-│   │   │   ├── book.py
-│   │   │   ├── caption.py
-│   │   │   ├── chapter.py
-│   │   │   ├── document_table.py
-│   │   │   ├── figure.py
-│   │   │   ├── section.py
-│   │   │   └── segment.py
-│   │   ├── services/
-│   │   │   ├── document_export.py
-│   │   │   ├── document_parser.py
-│   │   │   ├── docx_parser.py
-│   │   │   ├── epub_structured_parser.py
-│   │   │   ├── reconstruction.py
-│   │   │   └── segmentation.py
-│   │   ├── db.py
-│   │   ├── main.py
-│   │   └── redis_client.py
-│   ├── tests/
-│   ├── alembic.ini
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── requirements-dev.txt
+│   │   └── services/
+│   │       ├── context_builder.py
+│   │       ├── prompt_builder.py
+│   │       ├── translation_engine.py
+│   │       └── translation_memory.py
+│   └── tests/
 ├── frontend/
 ├── .github/workflows/ci.yml
 ├── .env.example
-├── docker-compose.yml
-└── README.md
+└── docker-compose.yml
 ```
 
 ## Run
 
-1. Copy the environment template:
+Copy the environment template:
 
 ```bash
 cp .env.example .env
 ```
 
-On Windows PowerShell:
+Windows PowerShell:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-2. Start the stack:
+Add only the provider keys you intend to use. Empty providers remain disabled:
+
+```env
+OPENAI_API_KEY=
+KIMI_API_KEY=
+GEMINI_API_KEY=
+AITUNNEL_API_KEY=
+```
+
+Never commit real API keys. Docker Compose forwards the configured variables into the backend container.
+
+Start the stack:
 
 ```bash
 docker compose up --build
 ```
 
-Docker Compose runs `alembic upgrade head` before starting the FastAPI server.
+Docker Compose applies `alembic upgrade head` before starting FastAPI.
 
-3. Open:
+Useful endpoints:
 
-- Frontend: http://localhost:3000
-- FastAPI Swagger: http://localhost:8000/docs
-- Backend readiness: http://localhost:8000/health
-- Backend liveness: http://localhost:8000/liveness
-
-If PostgreSQL or Redis is unavailable, `/health` returns HTTP 503.
+- Frontend: `http://localhost:3000`
+- Swagger: `http://localhost:8000/docs`
+- Readiness: `http://localhost:8000/health`
+- Liveness: `http://localhost:8000/liveness`
 
 ## Document API
 
@@ -144,14 +164,75 @@ POST /api/books/upload
 GET  /api/books/{book_id}/export/docx
 ```
 
-Current supported input formats:
+Supported source formats:
 
-- `.epub`
 - `.docx`
+- `.epub`
 
-The upload pipeline stores the original file and extracted assets, preserves ordered structural blocks, persists the normalized document in PostgreSQL and creates deterministic translation segments.
+## Glossary API
 
-The DOCX export endpoint reconstructs a source-language DOCX from the persisted normalized model. It is intended as a structural-fidelity gate before translated reconstruction is introduced.
+```text
+POST /api/books/{book_id}/glossary
+GET  /api/books/{book_id}/glossary
+```
+
+Glossary matches are automatically injected into translation context for the current segment.
+
+## Translation API
+
+```text
+POST /api/segments/{segment_id}/translations
+GET  /api/segments/{segment_id}/translations
+GET  /api/segments/{segment_id}/translation-context
+POST /api/segments/{segment_id}/translate
+POST /api/segments/{segment_id}/translate/pipeline
+POST /api/translations/{translation_id}/versions/{version_id}/finalize
+GET  /api/ai/providers
+```
+
+`GET /api/ai/providers` exposes provider names only; it never returns API keys.
+
+Example conceptual pipeline request:
+
+```json
+{
+  "target_language": "ru",
+  "stages": [
+    {"provider": "kimi", "model": "<configured-kimi-model>", "role": "translator"},
+    {"provider": "openai", "model": "<configured-openai-model>", "role": "reviewer"},
+    {"provider": "gemini", "model": "<configured-gemini-model>", "role": "critic"},
+    {"provider": "openai", "model": "<configured-openai-model>", "role": "finalizer"}
+  ],
+  "finalize_last": true
+}
+```
+
+Model names are intentionally configuration/request data rather than hard-coded project constants.
+
+## Translation lifecycle
+
+```text
+Source Segment
+    ↓
+Context Builder
+    ├── neighbouring segments
+    ├── Glossary
+    └── Translation Memory
+    ↓
+Model Gateway
+    ↓
+Translator
+    ↓
+Reviewer
+    ↓
+Critic / Finalizer
+    ↓
+TranslationVersion history
+    ↓
+Approved final version
+    ├── Segment.translated_text compatibility field
+    └── Translation Memory
+```
 
 ## Tests and CI
 
@@ -162,42 +243,32 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-GitHub Actions additionally starts PostgreSQL, applies `alembic upgrade head`, runs the database round-trip integration test and builds the Next.js frontend.
+GitHub Actions:
 
-## Reconstruction V1 scope
+- starts PostgreSQL
+- applies the complete Alembic migration chain
+- enables `RUN_DB_INTEGRATION=1`
+- runs Document Engine database round-trip tests
+- runs Translation Engine database round-trip tests
+- validates provider request/response adapters with `httpx.MockTransport`
+- builds the Next.js frontend
 
-Currently preserved/reconstructed:
+No live LLM calls are made by CI.
 
-- chapter headings
-- section/subsection headings
-- paragraphs
-- ordered source blocks
-- bullet/numbered list semantics
-- code/blockquote block type
-- tables and cell values
-- figures/images
-- captions
+## Current boundaries
 
-Known V1 limitations:
+Document Reconstruction V1 is structural rather than pixel-identical. Formula, footnote/endnote, complex hyperlink and advanced table-style fidelity still need dedicated document models.
 
-- exact typography/layout is not reproduced pixel-for-pixel
-- inline image/text ordering inside the same DOCX paragraph is approximated
-- formulas, footnotes/endnotes and complex hyperlinks need dedicated structural models
-- advanced table merges/styles are not yet reconstructed faithfully
-- EPUB export is not yet implemented
+Translation Engine V1 currently executes requested model calls in the HTTP request lifecycle. Before large-book production processing, model orchestration should move to durable background jobs/workers using the existing Redis foundation, with retries, idempotency, rate limiting and job progress reporting.
 
-## Next stage — Translation Engine
+## Next stage
 
-The next engineering stage is provider-neutral translation infrastructure:
+After Translation Engine V1 is stable:
 
-1. `Translation` and `TranslationVersion` persistence;
-2. glossary/terminology model;
-3. Translation Memory keyed by deterministic source hashes;
-4. Context Builder for chapter/section/neighbouring-segment context;
-5. Model Gateway abstraction;
-6. provider adapters for Kimi, OpenAI, Gemini and optionally AI Tunnel;
-7. translator/reviewer/critic orchestration;
-8. multi-model QA and quality scoring;
-9. translated DOCX reconstruction.
-
-LLM provider code should not bypass the Model Gateway or write directly into source document entities.
+1. durable translation jobs/workers;
+2. translated-document reconstruction using selected `TranslationVersion` values;
+3. QA result model and explicit multi-model quality scoring;
+4. terminology consistency checks across chapters;
+5. batch/chapter/book translation orchestration;
+6. human approval/review workflow;
+7. cost/token telemetry and provider routing policies.

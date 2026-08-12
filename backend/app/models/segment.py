@@ -38,3 +38,15 @@ class Segment(Base, TimestampMixin):
 
     chapter = relationship("Chapter", back_populates="segments")
     block = relationship("Block", back_populates="segments")
+    translations = relationship(
+        "Translation",
+        back_populates="segment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    model_runs = relationship(
+        "ModelRun",
+        back_populates="segment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
