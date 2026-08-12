@@ -22,6 +22,12 @@ class Segment(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
+    block_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("blocks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     segment_type: Mapped[str] = mapped_column(String(50), default="paragraph", nullable=False)
     source_text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -31,3 +37,4 @@ class Segment(Base, TimestampMixin):
     metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
     chapter = relationship("Chapter", back_populates="segments")
+    block = relationship("Block", back_populates="segments")
