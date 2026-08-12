@@ -1,7 +1,8 @@
 from pathlib import Path
 
+import ebooklib
 from bs4 import BeautifulSoup
-from ebooklib import ITEM_DOCUMENT, epub
+from ebooklib import epub
 
 from app.services.document_parser import NormalizedChapter, NormalizedDocument
 
@@ -20,7 +21,7 @@ def parse_epub(path: Path) -> NormalizedDocument:
 
     for item_id, _linear in book.spine:
         item = book.get_item_with_id(item_id)
-        if item is None or item.get_type() != ITEM_DOCUMENT:
+        if item is None or item.get_type() != ebooklib.ITEM_DOCUMENT:
             continue
 
         soup = BeautifulSoup(item.get_content(), "html.parser")
