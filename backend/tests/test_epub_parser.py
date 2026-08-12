@@ -20,8 +20,10 @@ def test_epub_parser_preserves_spine_order(tmp_path: Path) -> None:
 
     book.add_item(first)
     book.add_item(second)
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
     book.toc = (first, second)
-    book.spine = [first, second]
+    book.spine = ["nav", first, second]
     epub.write_epub(str(path), book)
 
     parsed = parse_epub(path)
