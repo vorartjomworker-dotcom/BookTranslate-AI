@@ -28,7 +28,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          pytest -q --tb=short 2>&1 | tee pytest-output.txt
+          python -m pytest -q --tb=short 2>&1 | tee pytest-output.txt
           code=${PIPESTATUS[0]}
           if [ "$code" -ne 0 ]; then
             {
