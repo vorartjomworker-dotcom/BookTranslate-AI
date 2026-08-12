@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/document-engine]
+    branches:
+      - main
+      - "feature/**"
   pull_request:
     branches: [main]
 
@@ -12,6 +14,25 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      DATABASE_URL: postgresql+asyncpg://booktranslate:booktranslate@localhost:5432/booktranslate
+      UPLOAD_DIR: /tmp/booktranslate-uploads
+      RUN_DB_INTEGRATION: "1"
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: booktranslate
+          POSTGRES_USER: booktranslate
+          POSTGRES_PASSWORD: booktranslate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U booktranslate -d booktranslate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - uses: actions/checkout@v5
@@ -24,6 +45,8 @@ jobs:
             backend/requirements-dev.txt
       - run: pip install -r requirements-dev.txt
       - run: python -m compileall app alembic tests
+      - name: Validate database migrations
+        run: alembic upgrade head
       - name: Run backend tests
         shell: bash
         run: |
