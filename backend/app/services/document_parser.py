@@ -53,7 +53,7 @@ def parse_document(path: Path, file_format: str) -> NormalizedDocument:
         return parse_docx(path)
 
     if normalized_format == "epub":
-        from app.services.epub_parser import parse_epub
+        from app.services.epub_structured_parser import parse_epub
 
         return parse_epub(path)
 
