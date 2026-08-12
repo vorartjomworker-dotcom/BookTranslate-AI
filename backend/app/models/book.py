@@ -31,3 +31,10 @@ class Book(Base, TimestampMixin):
         order_by="Chapter.position",
         passive_deletes=True,
     )
+    assets = relationship(
+        "Asset",
+        back_populates="book",
+        cascade="all, delete-orphan",
+        order_by="Asset.position",
+        passive_deletes=True,
+    )

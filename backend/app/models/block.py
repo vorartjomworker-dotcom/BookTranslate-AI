@@ -37,8 +37,18 @@ class Block(Base, TimestampMixin):
 
     chapter = relationship("Chapter", back_populates="blocks")
     section = relationship("Section", back_populates="blocks")
-    segments = relationship(
-        "Segment",
+    segments = relationship("Segment", back_populates="block", order_by="Segment.position")
+    figure = relationship("Figure", back_populates="block", uselist=False, cascade="all, delete-orphan")
+    table_data = relationship(
+        "DocumentTable",
         back_populates="block",
-        order_by="Segment.position",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    caption = relationship(
+        "Caption",
+        foreign_keys="Caption.block_id",
+        back_populates="block",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
