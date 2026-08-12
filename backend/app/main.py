@@ -2,15 +2,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.ai import router as ai_router
 from app.api.books import router as books_router
 from app.api.export import router as export_router
+from app.api.glossary import router as glossary_router
+from app.api.translations import router as translations_router
 from app.api.upload import router as upload_router
 from app.core.config import settings
 from app.db import check_database
 from app.redis_client import check_redis
 
 
-app = FastAPI(title=settings.app_name, version="0.3.0")
+app = FastAPI(title=settings.app_name, version="0.4.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,6 +26,9 @@ app.add_middleware(
 app.include_router(books_router)
 app.include_router(upload_router)
 app.include_router(export_router)
+app.include_router(glossary_router)
+app.include_router(translations_router)
+app.include_router(ai_router)
 
 
 @app.get("/")
