@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     download_ticket_ttl_seconds: int = 120
     cors_origins: str = "http://localhost:3000"
 
+    session_access_ttl_seconds: int = 8 * 60 * 60
+    session_refresh_ttl_seconds: int = 30 * 24 * 60 * 60
+    session_max_active_per_user: int = 20
+
     oidc_enabled: bool = False
     oidc_issuer: str | None = None
     oidc_client_id: str | None = None
@@ -44,6 +48,12 @@ class Settings(BaseSettings):
     oidc_scopes: str = "openid email profile"
     oidc_role_claim: str = "booktranslate_role"
     oidc_default_role: str = "viewer"
+
+    scim_enabled: bool = False
+    scim_bearer_token: str | None = None
+    scim_bearer_token_file: str | None = None
+    scim_default_role: str = "viewer"
+    scim_role_group_prefix: str = "BookTranslate-"
 
     ai_request_timeout_seconds: int = 120
     openai_api_key: str | None = None
@@ -58,6 +68,9 @@ class Settings(BaseSettings):
     aitunnel_api_key: str | None = None
     aitunnel_api_key_file: str | None = None
     aitunnel_base_url: str = "https://api.aitunnel.ru/v1"
+    provider_feedback_ttl_seconds: int = 300
+    provider_cooldown_default_seconds: int = 60
+    provider_min_remaining_requests: int = 1
 
     vision_provider: str = "openai"
     vision_model: str | None = None
@@ -77,6 +90,9 @@ class Settings(BaseSettings):
     figure_render_min_font_size: int = 8
     figure_render_max_font_size: int = 48
     figure_render_padding_px: int = 2
+    figure_render_default_mode: str = "inpaint"
+    figure_inpaint_radius_px: int = 3
+    figure_vector_svg_enabled: bool = True
 
     translation_queue_name: str = "translation"
     translation_worker_poll_seconds: int = 5
@@ -106,6 +122,7 @@ class Settings(BaseSettings):
             "bootstrap_admin_token": self.bootstrap_admin_token_file,
             "auth_signing_secret": self.auth_signing_secret_file,
             "oidc_client_secret": self.oidc_client_secret_file,
+            "scim_bearer_token": self.scim_bearer_token_file,
             "openai_api_key": self.openai_api_key_file,
             "kimi_api_key": self.kimi_api_key_file,
             "gemini_api_key": self.gemini_api_key_file,
