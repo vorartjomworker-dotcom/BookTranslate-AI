@@ -26,13 +26,26 @@ def _block_type(tag_name: str) -> str:
     return {"pre": "code", "blockquote": "blockquote", "li": "list_item"}.get(tag_name, "paragraph")
 
 
+def _epub_type(element) -> str:
+    return str(element.get("epub:type") or element.get("type") or "").strip().lower()
+
+
+def _note_type(element) -> str | None:
+    value = _epub_type(element)
+    if "footnote" in value:
+        return "footnote"
+    if "endnote" in value or "rearnote" in value:
+        return "endnote"
+    return None
+
+
 def _inline_metadata(element) -> dict:
     hyperlinks = []
     footnote_refs = []
     for anchor in element.find_all("a", href=True):
         href = str(anchor.get("href") or "")
         label = anchor.get_text(" ", strip=True)
-        epub_type = str(anchor.get("epub:type") or anchor.get("type") or "")
+        epub_type = _epub_type(anchor)
         item = {"href": href, "text": label, "epub_type": epub_type or None}
         hyperlinks.append(item)
         if "noteref" in epub_type or href.startswith("#"):
@@ -108,7 +121,7 @@ def parse_epub(path: Path) -> NormalizedDocument:
         elements = soup.find_all(
             [
                 "h1", "h2", "h3", "h4", "h5", "h6",
-                "p", "pre", "blockquote", "li", "img", "table", "figcaption", "caption",
+                "p", "pre", "blockquote", "li", "img", "table", "figcaption", "caption", "aside",
             ]
         )
         first_heading = next(
@@ -125,8 +138,31 @@ def parse_epub(path: Path) -> NormalizedDocument:
             tag_name = element.name or "p"
             if tag_name in {"p", "pre", "blockquote", "li", "img"} and element.find_parent("table"):
                 continue
-            if tag_name == "p" and element.find_parent(["li", "figcaption"]):
+            if tag_name == "p" and element.find_parent(["li", "figcaption", "aside"]):
                 continue
+
+            if tag_name == "aside":
+                note_type = _note_type(element)
+                if note_type:
+                    text = element.get_text(" ", strip=True)
+                    if text:
+                        note_id = str(element.get("id") or f"{note_type}-{len(chapter.blocks) + 1}")
+                        chapter.blocks.append(
+                            NormalizedBlock(
+                                position=len(chapter.blocks),
+                                block_type=note_type,
+                                source_text=text,
+                                section_position=current_section_position,
+                                metadata_json={
+                                    "note_id": note_id,
+                                    "note_type": note_type,
+                                    "epub_type": _epub_type(element),
+                                    "item_id": item_id,
+                                    **_inline_metadata(element),
+                                },
+                            )
+                        )
+                    continue
 
             if tag_name.startswith("h"):
                 text = element.get_text(" ", strip=True)
