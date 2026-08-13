@@ -1,5 +1,6 @@
 import asyncio
 import os
+import uuid
 
 import httpx
 import pytest
@@ -25,7 +26,7 @@ async def _run() -> None:
     settings.scim_role_group_prefix = "BookTranslate-"
     headers = {"Authorization": "Bearer stage10-scim-secret"}
     transport = httpx.ASGITransport(app=app)
-    user_id = None
+    user_id: str | None = None
     try:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             config = await client.get("/scim/v2/ServiceProviderConfig", headers=headers)
@@ -77,8 +78,9 @@ async def _run() -> None:
             deleted = await client.delete(f"/scim/v2/Users/{user_id}", headers=headers)
             assert deleted.status_code == 204
 
+        assert user_id is not None
         async with AsyncSessionLocal() as db:
-            stored = await db.get(AppUser, user_id)
+            stored = await db.get(AppUser, uuid.UUID(user_id))
             assert stored is not None
             assert stored.scim_managed is True
             assert stored.scim_external_id == "idp-stage10-1"
