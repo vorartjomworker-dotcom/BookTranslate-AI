@@ -1,0 +1,160 @@
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+
+backend:
+  image:
+    repository: ghcr.io/vorartjomworker-dotcom/booktranslate-ai-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 2
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "2", memory: 2Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+frontend:
+  image:
+    repository: ghcr.io/vorartjomworker-dotcom/booktranslate-ai-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 2
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+
+workers:
+  translation:
+    replicas: 2
+    command: ["python", "-m", "app.workers.translation_worker"]
+    queueName: translation
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "2", memory: 2Gi}
+  vision:
+    replicas: 1
+    command: ["python", "-m", "app.workers.vision_worker"]
+    queueName: vision
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "2", memory: 2Gi}
+  figureRender:
+    replicas: 1
+    command: ["python", "-m", "app.workers.figure_render_worker"]
+    queueName: figure-render
+    resources:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {cpu: "4", memory: 4Gi}
+
+keda:
+  enabled: false
+  pollingInterval: 15
+  cooldownPeriod: 120
+  minReplicaCount: 1
+  maxReplicaCount: 20
+  listLength: "5"
+  # KEDA redis-list scaler uses a full Redis connection string from this Secret key.
+  redisSecretKey: redis-url
+
+service:
+  backendPort: 8000
+  frontendPort: 3000
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  host: translate.example.com
+  tls:
+    enabled: true
+    secretName: booktranslate-tls
+
+config:
+  appEnvironment: production
+  authRequired: "true"
+  auditEnabled: "true"
+  corsOrigins: https://translate.example.com
+  storageBackend: s3
+  s3EndpointUrl: ""
+  s3Bucket: booktranslate
+  s3Region: us-east-1
+  s3UseSsl: "true"
+  s3AddressingStyle: path
+  s3PresignDownloads: "true"
+  oidcEnabled: "false"
+  oidcIssuer: ""
+  oidcClientId: ""
+  oidcRedirectUri: https://translate.example.com/api/auth/oidc/callback
+  oidcFrontendRedirectUri: https://translate.example.com/auth/callback
+  oidcScopes: openid email profile
+  oidcRoleClaim: booktranslate_role
+  oidcDefaultRole: viewer
+  scimEnabled: "false"
+  scimDefaultRole: viewer
+  scimRoleGroupPrefix: BookTranslate-
+  visionProvider: openai
+  visionModel: ""
+  otelEnabled: "true"
+  otelExporterOtlpEndpoint: http://otel-collector.observability.svc.cluster.local:4318
+  sessionAccessTtlSeconds: "28800"
+  sessionRefreshTtlSeconds: "2592000"
+  providerFeedbackTtlSeconds: "300"
+  providerCooldownDefaultSeconds: "60"
+  figureRenderDefaultMode: inpaint
+
+secrets:
+  # Create this Secret externally (External Secrets Operator, CSI Secrets Store,
+  # Sealed Secrets, Vault, cloud secret manager, etc.). The chart never creates
+  # production credentials from values.
+  existingSecret: booktranslate-secrets
+  keys:
+    databaseUrl: database-url
+    redisUrl: redis-url
+    bootstrapAdminToken: bootstrap-admin-token
+    authSigningSecret: auth-signing-secret
+    oidcClientSecret: oidc-client-secret
+    scimBearerToken: scim-bearer-token
+    s3AccessKey: s3-access-key
+    s3SecretKey: s3-secret-key
+    openaiApiKey: openai-api-key
+    kimiApiKey: kimi-api-key
+    geminiApiKey: gemini-api-key
+    aitunnelApiKey: aitunnel-api-key
+    metricsToken: metrics-token
+
+migration:
+  enabled: true
+  backoffLimit: 2
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: true
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
