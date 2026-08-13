@@ -7,6 +7,7 @@ from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 
+from app.services.docx_notes import docx_note_id, inject_note_parts
 from app.services.document_parser import NormalizedDocument
 
 
@@ -44,6 +45,19 @@ def _append_hyperlink(paragraph, text: str, href: str) -> None:
     paragraph._p.append(hyperlink)
 
 
+def _append_note_reference(paragraph, note_type: str, source_id: str | int) -> None:
+    run = OxmlElement("w:r")
+    properties = OxmlElement("w:rPr")
+    vertical = OxmlElement("w:vertAlign")
+    vertical.set(qn("w:val"), "superscript")
+    properties.append(vertical)
+    run.append(properties)
+    reference = OxmlElement(f"w:{note_type}Reference")
+    reference.set(qn("w:id"), str(docx_note_id(source_id)))
+    run.append(reference)
+    paragraph._p.append(run)
+
+
 def _apply_inline_fidelity(paragraph, metadata: dict) -> None:
     links = metadata.get("hyperlinks") or []
     if links:
@@ -51,9 +65,15 @@ def _apply_inline_fidelity(paragraph, metadata: dict) -> None:
         for index, link in enumerate(links):
             if index:
                 paragraph.add_run(" · ")
-            _append_hyperlink(paragraph, str(link.get("text") or link.get("href") or "link"), str(link.get("href") or ""))
+            _append_hyperlink(
+                paragraph,
+                str(link.get("text") or link.get("href") or "link"),
+                str(link.get("href") or ""),
+            )
     for reference in metadata.get("footnote_references") or []:
-        paragraph.add_run(f" [fn:{reference}]")
+        _append_note_reference(paragraph, "footnote", reference)
+    for reference in metadata.get("endnote_references") or []:
+        _append_note_reference(paragraph, "endnote", reference)
     for xml in metadata.get("omml") or []:
         try:
             paragraph._p.append(parse_xml(xml))
@@ -68,6 +88,8 @@ def reconstruct_docx(source: NormalizedDocument, output_path: Path) -> Path:
         document.core_properties.title = source.title
 
     assets = {asset.position: asset for asset in source.assets}
+    footnotes: dict[str, str] = {}
+    endnotes: dict[str, str] = {}
 
     for chapter in source.chapters:
         if chapter.title:
@@ -76,6 +98,12 @@ def reconstruct_docx(source: NormalizedDocument, output_path: Path) -> Path:
         for block in sorted(chapter.blocks, key=lambda item: item.position):
             text = block.source_text or ""
             metadata = dict(block.metadata_json or {})
+            if block.block_type in {"footnote", "endnote"}:
+                note_id = str(metadata.get("note_id") or len(footnotes) + len(endnotes) + 1)
+                target = footnotes if block.block_type == "footnote" else endnotes
+                target[note_id] = text
+                continue
+
             paragraph = None
             if block.block_type == "heading":
                 level = int(metadata.get("level", 2))
@@ -109,4 +137,5 @@ def reconstruct_docx(source: NormalizedDocument, output_path: Path) -> Path:
                 _apply_inline_fidelity(paragraph, metadata)
 
     document.save(output_path)
+    inject_note_parts(output_path, footnotes=footnotes, endnotes=endnotes)
     return output_path
