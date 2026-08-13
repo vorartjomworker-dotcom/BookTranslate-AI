@@ -58,6 +58,20 @@ jobs:
           version: v4.2.0
       - run: pip install -r requirements-dev.txt
       - run: python -m compileall app alembic tests
+      - name: Validate GitHub workflow YAML
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+          paths = sorted(Path("../.github/workflows").glob("*.yml"))
+          assert paths, "No GitHub workflows found"
+          for path in paths:
+              payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+              assert isinstance(payload, dict), f"{path} must be a YAML mapping"
+              assert "jobs" in payload, f"{path} has no jobs"
+              print(f"validated {path}")
+          PY
       - name: Validate database migrations
         run: alembic upgrade head
       - name: Validate operations scripts and Compose
