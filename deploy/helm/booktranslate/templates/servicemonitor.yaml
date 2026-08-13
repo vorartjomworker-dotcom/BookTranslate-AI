@@ -1,0 +1,25 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "booktranslate.fullname" . }}
+  labels:
+    {{- include "booktranslate.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "booktranslate.labels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ .Values.secrets.existingSecret | quote }}
+          key: {{ .Values.secrets.keys.metricsToken | quote }}
+{{- end }}
