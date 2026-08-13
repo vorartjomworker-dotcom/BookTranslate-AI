@@ -24,6 +24,7 @@ _PUBLIC_API_PATHS = {
     "/api/auth/oidc/config",
     "/api/auth/oidc/login",
     "/api/auth/oidc/callback",
+    "/api/auth/session/refresh",
 }
 
 
@@ -68,7 +69,7 @@ class SecurityObservabilityMiddleware(BaseHTTPMiddleware):
                         async with AsyncSessionLocal() as db:
                             actor = await authenticate_api_token(db, token)
                         if actor is None:
-                            return JSONResponse(status_code=401, content={"detail": "Invalid or inactive API token"})
+                            return JSONResponse(status_code=401, content={"detail": "Invalid, expired or inactive API token"})
                         request.state.actor = actor
 
             response = await call_next(request)
