@@ -21,7 +21,7 @@ POSTGRES_USER="${POSTGRES_USER:-booktranslate}"
 POSTGRES_DB="${POSTGRES_DB:-booktranslate}"
 
 echo "Stopping application workers..."
-docker compose stop frontend backend worker vision-worker || true
+docker compose stop frontend backend worker vision-worker figure-render-worker || true
 
 echo "Restoring PostgreSQL..."
 cat "$BACKUP_DIR/postgres.dump" | docker compose exec -T postgres pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner
@@ -35,5 +35,5 @@ docker compose cp "$BACKUP_DIR/redis.rdb" redis:/data/dump.rdb >/dev/null
 docker compose start redis
 
 echo "Starting application..."
-docker compose up -d backend worker vision-worker frontend
+docker compose up -d backend worker vision-worker figure-render-worker frontend
 printf 'Restore completed from: %s\n' "$BACKUP_DIR"
