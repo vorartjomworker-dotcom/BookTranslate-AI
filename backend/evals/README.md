@@ -31,9 +31,11 @@ The scorer compares source and translation multisets for:
 - e-mail addresses;
 - CLI flags, inline-code anchors, scoped C++ identifiers and technical filenames.
 
-URLs/e-mail/code anchors are excluded from source-language leakage detection because preserving them is normally correct. Digits embedded inside URLs/e-mail addresses are not double-counted as numeric evidence.
+Units use explicit token boundaries, so a value such as `64 before` is not misread as `64B`. URLs/e-mail/code anchors are excluded from source-language leakage detection because preserving them is normally correct. Digits embedded inside URLs/e-mail addresses are not double-counted as numeric evidence.
 
 A missing URL/e-mail, severe numeric loss, severe protected-anchor loss, empty translation or severe unsupported-anchor hallucination is a critical failure.
+
+The current source-leakage V1 detector is a conservative Latin-script four-word n-gram heuristic. It is intentionally low-weight and is not treated as proof of a bad translation by itself.
 
 ## Terminology
 
@@ -73,6 +75,20 @@ GET  /api/translations/{translation_id}/versions/{version_id}/quality-v2
 ```
 
 POST accepts optional LLM evaluators, deterministic/judge weights and an optional trusted reference. Every run is stored in `translation_quality_evaluations` with the score schema, dimension scores, issues, critical-failure flag and evaluator fingerprint. The final score is propagated to `TranslationVersion.quality_score` and related translation-memory entries.
+
+## Translation-job integration
+
+Quality V2 runs automatically after every successfully finalized translation-job segment. Existing `qa_evaluators`, when configured, still produce the semantic LLM judge score; Quality V2 then combines that score with deterministic evidence. Without `qa_evaluators`, the job still receives deterministic scoring.
+
+Job configuration controls:
+
+- `quality_v2_enabled` — defaults to `true`; set `false` only for compatibility/diagnostic runs;
+- `quality_deterministic_weight` — defaults to `0.45`;
+- `quality_judge_weight` — defaults to `0.55`;
+- `min_quality_score` — applies to the final V2 score when V2 is enabled;
+- `human_review_below` — requests human review from the final V2 score.
+
+A deterministic critical failure is written into the job warning list as `quality_critical_fail`, so the job finishes with warnings rather than silently accepting a technically unsafe translation.
 
 ## Boundary
 
