@@ -1,120 +1,124 @@
 # BookTranslate AI
 
-AI-powered platform for structured technical-book translation with persistent document reconstruction, provider-neutral AI orchestration, durable workers, multi-model QA, human review, figure Vision/OCR, SSO/RBAC and browser translation/reviewer workspaces.
+AI-powered platform for structured technical-book translation with persistent document reconstruction, provider-neutral AI orchestration, durable workers, multi-model QA, human review, figure OCR/redraw, SSO/RBAC, object storage and browser translator/reviewer workspaces.
 
 ## Current status
 
-### Stage 1 — Infrastructure ✅
-Next.js + TypeScript, FastAPI, PostgreSQL, Redis, Docker Compose, health checks and GitHub Actions CI.
+- **Stage 1 — Infrastructure ✅** Next.js + TypeScript, FastAPI, PostgreSQL, Redis, Docker Compose, health checks and CI.
+- **Stage 2 — Document Engine ✅** `Book → Chapter → Section → Block → Segment`, assets, figures, tables, captions, DOCX/EPUB parsing and reconstruction.
+- **Stage 3 — Translation Engine ✅** Translation history, ModelRun audit, prompts, glossary, Translation Memory, Context Builder and OpenAI/Kimi/Gemini/AITUNNEL gateway.
+- **Stage 4 — Jobs, Workers & Multi-model QA ✅** durable Redis jobs, retries/recovery, progress, multi-model QA and translated DOCX.
+- **Stage 5 — Human Review, Book QA & Adaptive Routing ✅** approval/edit/reject, terminology audit, provider policies, budgets and application-side rate controls.
+- **Stage 6 — EPUB Fidelity & Translator Workbench ✅** translated EPUB, hyperlink/formula fidelity metadata, source↔target browser editor and QA dashboard.
+- **Stage 7 — Notes, RBAC & Reviewer Workflow ✅** first-class footnote/endnote translation, roles, assignments, comments, version diff and reviewer inbox.
+- **Stage 8 — Vision/OCR, SSO, Security & Operations ✅** figure OCR, OIDC, full API perimeter, signed downloads, Prometheus, audit and backup/restore foundation.
+- **Stage 9 — Figure Redraw, Object Storage & Production Telemetry ✅** translated figure variants, S3/MinIO, distributed worker leases, OpenTelemetry, SLO definitions and hardened TLS deployment baseline.
 
-### Stage 2 — Document Engine ✅
-Persistent `Book → Chapter → Section → Block → Segment` structure with assets, figures, tables and captions; DOCX/EPUB parsing, deterministic hashes and structural reconstruction.
-
-### Stage 3 — Translation Engine ✅
-Persistent Translation/TranslationVersion history, ModelRun audit trail, prompts, glossary, Translation Memory, Context Builder and OpenAI/Kimi/Gemini/AITUNNEL gateway.
-
-### Stage 4 — Jobs, Workers & Multi-model QA ✅
-Durable book/chapter translation jobs, Redis worker, retries/idempotency/recovery, progress, multi-model QA and translated DOCX.
-
-### Stage 5 — Human Review, Book QA & Adaptive Routing ✅
-Human approve/edit/reject, auditable human versions, book QA 0–100, terminology audit, provider policies, token/cost budgets and Redis RPM/TPM/concurrency routing.
-
-### Stage 6 — EPUB Fidelity & Translator Workbench ✅
-Translated EPUB, hyperlink/MathML/OMML fidelity, browser library/workbench, source↔target editor, QA dashboard and terminology actions.
-
-### Stage 7 — Notes, RBAC & Reviewer Workflow ✅
-First-class DOCX/EPUB footnote/endnote translation, application roles (`admin`, `reviewer`, `translator`, `viewer`), reviewer assignment, comments, version diff and reviewer inbox.
-
-### Stage 8 — Vision/OCR, SSO, Security & Operations ✅
+## Stage 9 architecture
 
 ```text
-Figure Asset
-    ↓
-VisionJob (Redis)
-    ↓
-Vision Provider
-    ↓
-VisionExtraction
-    ↓
-OCR regions + bbox
-    ↓
+Original figure asset (immutable)
+        ↓
+VisionJob / Vision worker
+        ↓
+OCR regions + normalized bbox
+        ↓
 Segment(type=figure_text)
-    ↓
-Translation → QA → Human Review
-
-OIDC Provider
-    ↓ auth code + state + nonce
-JWKS signature / issuer / audience validation
-    ↓
-AppUser + local hashed app token
-    ↓
-Full /api/* security perimeter
-    ↓
-Signed short-lived download ticket
-
-HTTP request
-    ↓
-Request ID + Prometheus metrics + mutation audit
+        ↓
+Translation → Multi-model QA → Human Review
+        ↓
+FigureRenderJob / render worker
+        ↓
+Pillow bbox renderer + DejaVu Sans
+        ↓
+immutable translated PNG variant
+        ↓
+LocalStorage or S3/MinIO
+        ↓
+translated DOCX / EPUB automatically selects
+latest completed render for the target language
 ```
 
-Implemented:
+Figure rendering is fingerprinted and idempotent. The fingerprint includes the source asset SHA-256, language, figure-text segment identities, source hashes, translations and bounding boxes. Re-running the same render does not create a duplicate variant.
 
-- durable `VisionJob` and independent `vision-worker` backed by Redis;
-- OpenAI Vision adapter using the Responses API with image input;
-- image bytes are read from persisted assets and sent as data URLs; no OCR-specific binary is required;
-- OCR output is normalized into text regions with optional normalized bounding boxes and region kinds;
-- `VisionExtraction` persists extracted text, regions, provider/model, provider request ID, token telemetry and failures;
-- each figure text region becomes an auditable `Segment(type="figure_text")`, therefore it uses the existing Translation → QA → Human Review pipeline;
-- repeat OCR marks obsolete figure-text segments `superseded`; translation jobs skip superseded segments;
-- source figure pixels are not silently modified;
-- generic confidential-client OpenID Connect Authorization Code flow;
-- discovery, token exchange, JWKS signature validation, issuer, audience, expiry and nonce checks;
-- explicitly unverified OIDC email identities are rejected;
-- configurable OIDC role claim with safe fallback to `viewer`;
-- OIDC users are bound to issuer + subject and receive a local application token whose SHA-256 hash is persisted;
-- full `/api/*` perimeter when `AUTH_REQUIRED=true`, with only bootstrap/OIDC login endpoints public;
-- short-lived HMAC-SHA256 signed download tickets bound to an exact export path;
-- translator Workbench requests signed download URLs instead of exposing bearer tokens in browser download navigation;
-- per-request `X-Request-ID`;
-- Prometheus request counter, latency histogram and in-progress gauge;
-- `/metrics` protected by a separate metrics token in authenticated deployments;
-- mutation audit log (`POST`, `PUT`, `PATCH`, `DELETE`) without storing request bodies or secrets;
-- admin operations status and audit-event APIs;
-- PostgreSQL + Redis + uploaded-assets backup/restore scripts for Bash and PowerShell;
-- Docker `restart: unless-stopped`, worker grace periods and separate Vision worker;
-- Alembic `0008` for OIDC identity fields, Vision jobs/extractions and audit events.
+The renderer estimates each OCR region background from its corners, chooses a contrast foreground, wraps/fits translated text into the region and records regions that may overflow. It never overwrites the original asset.
 
-## Quality scoring
+## Storage
 
-### Segment QA
+The application uses a single `StorageBackend` contract:
 
 ```text
-Semantic accuracy       30%
-Terminology             20%
-Completeness            15%
-Fluency                 15%
-Technical integrity     10%
-Style                   10%
+LocalStorage
+S3Storage ──► AWS S3 / MinIO / S3-compatible object stores
 ```
+
+Local storage remains the default and is backward compatible with existing books. New S3/MinIO deployments store source documents, parsed assets and rendered figures by object key. S3 downloads can use native short-lived presigned URLs.
+
+Example local configuration:
+
+```env
+STORAGE_BACKEND=local
+UPLOAD_DIR=/data/uploads
+```
+
+Example MinIO configuration:
+
+```env
+STORAGE_BACKEND=minio
+S3_ENDPOINT_URL=http://minio:9000
+S3_BUCKET=booktranslate
+S3_REGION=us-east-1
+S3_ACCESS_KEY_FILE=/run/secrets/s3_access_key
+S3_SECRET_KEY_FILE=/run/secrets/s3_secret_key
+S3_USE_SSL=false
+S3_ADDRESSING_STYLE=path
+```
+
+Development MinIO is optional:
+
+```bash
+docker compose --profile object-storage up --build
+```
+
+## Distributed worker leases
+
+Translation, Vision and figure-render workers acquire an owner-specific Redis lease after dequeue. Leases use `SET NX EX`, renew through an owner-checked Lua heartbeat and release only when the same owner still holds the lease. A crashed worker stops renewing; the lease expires and normal recovery can resume the job. Duplicate dequeue/recovery attempts cannot execute the same job concurrently while the lease is alive.
+
+Metrics:
 
 ```text
-90–100  excellent
-80–89   good
-70–79   acceptable
-60–69   needs_review
-<60     poor
+booktranslate_job_lease_conflicts_total{queue}
+booktranslate_job_active_leases{queue}
 ```
 
-### Book QA
+## OpenTelemetry and SLO
+
+When `OTEL_ENABLED=true`, API and worker processes export OTLP traces. HTTPX and SQLAlchemy are instrumented and API responses expose `X-Trace-ID` when a valid trace is active. Audit metadata links mutation events to the trace ID without recording request bodies.
+
+Default SLO baseline:
 
 ```text
-Translation coverage       25%
-Average segment QA         40%
-Terminology consistency    25%
-Human review coverage      10%
+Availability     99.5%
+p95 API latency  <= 1.0 s
 ```
 
-## Run
+`GET /api/ops/slo` returns the active targets and PromQL. The production baseline includes Prometheus rules for availability, p95 latency and sustained lease contention.
+
+## Authentication and secrets
+
+Application roles remain:
+
+```text
+admin | reviewer | translator | viewer
+```
+
+OIDC uses Authorization Code Flow with discovery, JWKS signature, issuer, audience, expiry and nonce validation. Application tokens are stored only as SHA-256 hashes.
+
+Sensitive settings support `*_FILE` so production deployments can mount Docker/Kubernetes/external-secret values instead of exposing them directly in application environment variables. Supported file-backed values include database/Redis URLs, signing/bootstrap secrets, OIDC client secret, S3 credentials, provider keys and the metrics token.
+
+Never commit provider keys, database credentials, OIDC secrets, TLS private keys or production `.env` files.
+
+## Local run
 
 ```bash
 cp .env.example .env
@@ -128,54 +132,7 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 
-Never commit provider, bootstrap, signing, OIDC or metrics secrets.
-
-### Local development
-
-```env
-AUTH_REQUIRED=false
-OPENAI_API_KEY=
-VISION_MODEL=
-```
-
-### Protected deployment
-
-Use strong independent secrets:
-
-```env
-AUTH_REQUIRED=true
-BOOTSTRAP_ADMIN_TOKEN=<one-time-admin-bootstrap-secret>
-AUTH_SIGNING_SECRET=<download-and-state-signing-secret>
-METRICS_TOKEN=<metrics-scrape-secret>
-CORS_ORIGINS=https://translator.example.com
-```
-
-Create the first administrator through `POST /api/auth/bootstrap` with `X-Bootstrap-Token`. The returned application token is displayed once; only its SHA-256 hash is stored.
-
-### Generic OIDC / SSO
-
-```env
-OIDC_ENABLED=true
-OIDC_ISSUER=https://idp.example.com
-OIDC_CLIENT_ID=<client-id>
-OIDC_CLIENT_SECRET=<client-secret>
-OIDC_REDIRECT_URI=https://api.example.com/api/auth/oidc/callback
-OIDC_FRONTEND_REDIRECT_URI=https://translator.example.com/auth/callback
-OIDC_ROLE_CLAIM=booktranslate_role
-OIDC_DEFAULT_ROLE=viewer
-```
-
-The frontend can also use locally issued application tokens; SSO and local bearer tokens map to the same application-role model.
-
-### Figure Vision/OCR
-
-```env
-OPENAI_API_KEY=<provider-secret>
-VISION_PROVIDER=openai
-VISION_MODEL=<deployment-selected-vision-capable-model>
-```
-
-`VISION_MODEL` is intentionally deployment-configured rather than hard-coded.
+Local defaults keep `AUTH_REQUIRED=false` and `STORAGE_BACKEND=local`.
 
 Services:
 
@@ -183,9 +140,47 @@ Services:
 - API / Swagger: `http://localhost:8000/docs`
 - readiness: `http://localhost:8000/health`
 - liveness: `http://localhost:8000/liveness`
-- Prometheus: `http://localhost:8000/metrics`
-- translation worker: Redis queue `translation`
-- vision worker: Redis queue `vision`
+- metrics: `http://localhost:8000/metrics`
+- translation queue: `translation`
+- Vision queue: `vision`
+- figure-render queue: `figure-render`
+
+## Production baseline
+
+See [`deploy/README.md`](deploy/README.md).
+
+The included production Compose stack provides:
+
+- Nginx TLS termination and HTTP→HTTPS redirect;
+- no public PostgreSQL, Redis, MinIO, backend or worker ports;
+- mounted application secrets through `/run/secrets/*`;
+- MinIO/S3-first application storage;
+- separate translation, Vision and figure-render workers;
+- Redis job leases;
+- OTLP collector;
+- Prometheus with protected internal scraping;
+- security headers and public `/metrics` denial;
+- Prometheus bound only to `127.0.0.1:9090`.
+
+TLS material belongs in `deploy/tls/` and secret files in `deploy/secrets/`; both directories prevent credential/key files from being committed.
+
+## Figure workflow in Workbench
+
+The browser Workbench exposes:
+
+```text
+Run figure OCR
+    ↓
+translate/review figure_text segments
+    ↓
+Render translated figures
+    ↓
+Latest PNG preview/download
+    ↓
+DOCX / EPUB export
+```
+
+Completed translated figure variants are automatically embedded in translated document exports.
 
 ## API summary
 
@@ -230,6 +225,16 @@ GET  /api/books/{book_id}/vision-jobs
 GET  /api/assets/{asset_id}/vision-extractions
 ```
 
+### Translated figure rendering
+
+```text
+POST /api/books/{book_id}/figure-render-jobs
+GET  /api/figure-render-jobs/{job_id}
+GET  /api/books/{book_id}/figure-renders
+POST /api/figure-renders/{render_id}/download-ticket
+GET  /api/figure-renders/{render_id}/download
+```
+
 ### Translation jobs
 
 ```text
@@ -242,19 +247,15 @@ GET  /api/books/{book_id}/translation-jobs
 POST /api/translation-jobs/{job_id}/cancel
 ```
 
-### QA / reviewer workflow
+### QA / review
 
 ```text
 POST /api/translations/{translation_id}/versions/{version_id}/qa
-GET  /api/translations/{translation_id}/versions/{version_id}/qa
 POST /api/translations/{translation_id}/versions/{version_id}/reviews
-GET  /api/books/{book_id}/human-reviews
 POST /api/human-reviews/{review_id}/resolve
 GET  /api/reviews/inbox
 POST /api/human-reviews/{review_id}/assign
 POST /api/human-reviews/{review_id}/comments
-GET  /api/human-reviews/{review_id}/comments
-POST /api/review-comments/{comment_id}/resolve
 GET  /api/translations/{translation_id}/versions/diff
 POST /api/books/{book_id}/qa-report
 GET  /api/books/{book_id}/qa-report/latest
@@ -265,68 +266,44 @@ GET  /api/books/{book_id}/qa-report/latest
 ```text
 GET /metrics
 GET /api/ops/status
+GET /api/ops/slo
 GET /api/admin/audit-events
 ```
 
-## Backup / restore
-
-Backups contain PostgreSQL, Redis state and `/data/uploads` (source uploads, extracted assets and generated exports).
-
-Linux/macOS:
-
-```bash
-./scripts/backup.sh
-./scripts/restore.sh ./backups/<timestamp>
-```
-
-PowerShell:
-
-```powershell
-.\scripts\backup.ps1
-.\scripts\restore.ps1 -BackupDirectory .\backups\<timestamp>
-```
-
-For production, move backups off-host and encrypt them with infrastructure-level key management. Test restore procedures regularly; a backup is not operationally useful until restore is verified.
+`/metrics` accepts either `X-Metrics-Token` or an equivalent Bearer credential, allowing Prometheus to use a mounted credentials file.
 
 ## Tests and CI
 
-GitHub Actions:
+GitHub Actions now:
 
-- starts real PostgreSQL and Redis services;
-- applies Alembic `0001 → 0008`;
-- runs Python compile validation;
-- validates Bash backup/restore syntax and `docker compose config`;
-- tests all Stage 1–7 document/translation/reviewer behavior;
-- tests OpenAI Vision request schema with mocked HTTP transport;
-- tests VisionJob → VisionExtraction → `figure_text` DB integration;
-- tests full authenticated API perimeter and signed browser download tickets;
-- tests OIDC discovery/token/JWKS/issuer/audience/nonce provisioning using an ephemeral RSA signing key and mocked identity provider;
-- tests Prometheus metrics protection and mutation audit persistence;
-- builds the Next.js production frontend including SSO callback and protected download workflow.
+- starts real PostgreSQL and Redis;
+- applies Alembic `0001 → 0009`;
+- compiles backend, migrations and tests;
+- validates local Compose and backup/restore shell syntax;
+- validates the hardened production Compose with temporary non-secret CI placeholder files;
+- runs `nginx -t` with an ephemeral self-signed certificate;
+- tests local and mocked-S3 storage contracts;
+- creates a real PNG, renders translated OCR text into it and verifies translated export asset substitution;
+- verifies render idempotence;
+- verifies owner-safe Redis lease acquire/renew/release behavior;
+- verifies mounted secret-file overrides;
+- retains all document, translation, QA, OIDC, Vision, audit and security tests from earlier stages;
+- builds the Next.js production frontend.
 
-CI never makes a live LLM/OCR call and contains no real API/OIDC credentials.
+CI performs no live LLM/Vision, production S3, OIDC provider or external telemetry calls and contains no real deployment credentials.
 
 ## Current boundaries
 
 - DOCX/EPUB reconstruction is structural rather than pixel-identical.
-- Word note bodies support translated textual content; deeply nested tables/images inside notes are still flattened.
-- Vision/OCR extracts and translates text regions but does **not** redraw translated text into source image pixels yet.
-- The Vision provider interface is extensible, but Stage 8 ships an OpenAI image-input implementation first.
-- Vision accuracy and bounding boxes are model outputs and must be reviewed for publication-critical figures.
-- OIDC V1 is a generic confidential-client Authorization Code integration, not provider-specific enterprise provisioning/SCIM.
-- OIDC login rotates the local application token for that user; multi-session refresh-token management is not implemented yet.
-- Download tickets are application-signed and short-lived; object-storage-native signed URLs are preferable once assets move to S3/MinIO.
-- Mutation audit intentionally excludes request bodies to avoid accidental secret/content capture.
-- The included backup scripts are operational foundations; production backups should be encrypted, scheduled, monitored and stored off-host.
-- Redis RPM/TPM controls remain application-side; provider-header-aware scheduling and stronger distributed leases can be added later.
+- Vision bounding boxes are model outputs; publication-critical figures require human review.
+- Figure redraw V1 uses bounded background replacement + text fitting, not semantic inpainting or vector-layout reconstruction.
+- Rotated/curved/handwritten text is not specially rendered in V1.
+- Generated figure variants are PNG even when the source asset used another raster format.
+- S3/MinIO bucket lifecycle/versioning/replication policies belong to infrastructure configuration.
+- The bundled OTLP collector uses a debug exporter by default; connect it to a durable tracing backend in production.
+- The production Compose baseline is single-host. Horizontal autoscaling/HA should move PostgreSQL/object storage to managed services or a clustered deployment.
+- Provider-specific rate-limit response headers are not yet fed back into the global scheduler.
 
 ## Next engineering stage
 
-Recommended Stage 9:
-
-1. image-redraw/overlay pipeline that renders translated OCR regions back into a derived figure while retaining the immutable source image;
-2. S3/MinIO object storage with native signed object URLs and lifecycle policies;
-3. production deployment IaC, reverse proxy/TLS and secrets manager integration;
-4. OpenTelemetry distributed traces, alerting and SLO dashboards;
-5. scheduled encrypted off-host backups with automated restore drills;
-6. stronger distributed worker leases and provider-header-aware rate-limit scheduling.
+A future Stage 10 can focus on advanced figure inpainting/vector reconstruction, Kubernetes/Helm/autoscaling, provider-header-aware admission control, SCIM/session refresh management, event/webhook integrations and automated restore drills.
