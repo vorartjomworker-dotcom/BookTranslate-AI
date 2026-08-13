@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,24 +38,34 @@ def new_api_token() -> str:
     return secrets.token_urlsafe(40)
 
 
-async def get_current_actor(
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    db: AsyncSession = Depends(get_db),
-) -> AppUser | DevActor:
-    if not settings.auth_required and credentials is None:
-        return DevActor()
-    if credentials is None or credentials.scheme.lower() != "bearer" or not credentials.credentials:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
-    token_hash = hash_api_token(credentials.credentials)
+async def authenticate_api_token(db: AsyncSession, token: str) -> AppUser | None:
+    token_hash = hash_api_token(token)
     actor = (
         await db.execute(
             select(AppUser).where(AppUser.api_token_hash == token_hash, AppUser.is_active.is_(True))
         )
     ).scalar_one_or_none()
+    if actor is not None:
+        actor.last_seen_at = datetime.now(timezone.utc)
+        await db.commit()
+    return actor
+
+
+async def get_current_actor(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    db: AsyncSession = Depends(get_db),
+) -> AppUser | DevActor:
+    state_actor = getattr(request.state, "actor", None)
+    if state_actor is not None:
+        return state_actor
+    if not settings.auth_required and credentials is None:
+        return DevActor()
+    if credentials is None or credentials.scheme.lower() != "bearer" or not credentials.credentials:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
+    actor = await authenticate_api_token(db, credentials.credentials)
     if actor is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or inactive API token")
-    actor.last_seen_at = datetime.now(timezone.utc)
-    await db.commit()
     return actor
 
 
