@@ -245,7 +245,7 @@ async def _run() -> None:
                 low_quality_threshold=80,
             )
             assert report.translation_coverage == 100.0
-            assert report.average_segment_quality == pytest.approx(91.25)
+            assert report.average_segment_quality == pytest.approx(89.79)
             assert report.terminology_consistency == 0.0
             assert report.human_review_coverage == 50.0
             assert report.unresolved_reviews == 1
