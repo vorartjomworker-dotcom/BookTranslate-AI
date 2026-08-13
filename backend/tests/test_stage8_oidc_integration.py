@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.security import sign_payload
 from app.db import AsyncSessionLocal, engine
 from app.models.app_user import AppUser
+from app.models.user_session import UserSession
 from app.services.oidc import complete_oidc_login
 
 pytestmark = pytest.mark.skipif(os.getenv("RUN_DB_INTEGRATION") != "1", reason="requires migrated PostgreSQL")
@@ -76,13 +77,24 @@ async def _run() -> None:
     try:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://idp.test") as client:
             async with AsyncSessionLocal() as db:
-                user, app_token, return_to = await complete_oidc_login(db, code="auth-code", state=state, client=client)
+                user, access_token, refresh_token, session, return_to = await complete_oidc_login(
+                    db,
+                    code="auth-code",
+                    state=state,
+                    client=client,
+                    user_agent="stage10-test",
+                    ip_address="127.0.0.1",
+                )
                 assert user.email == "oidc-stage8@example.test"
                 assert user.role == "reviewer"
                 assert user.oidc_subject == "user-123"
                 assert return_to == "http://localhost:3000/auth/callback"
-                authenticated = await authenticate_api_token(db, app_token)
+                assert refresh_token
+                assert session.user_agent == "stage10-test"
+                authenticated = await authenticate_api_token(db, access_token)
                 assert authenticated is not None and authenticated.id == user.id
+                stored_session = await db.get(UserSession, session.id)
+                assert stored_session is not None and stored_session.revoked_at is None
                 user_id = user.id
 
         async with AsyncSessionLocal() as db:
