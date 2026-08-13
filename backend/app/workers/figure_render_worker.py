@@ -5,6 +5,7 @@ import logging
 
 from app.core.config import settings
 from app.db import AsyncSessionLocal, engine
+from app.observability import configure_tracing
 from app.redis_client import redis_client
 from app.services.figure_rendering import process_figure_render_job, recover_figure_render_jobs
 from app.services.job_queue import dequeue_job
@@ -17,22 +18,16 @@ logger = logging.getLogger("booktranslate.figure_render_worker")
 
 async def _recover() -> int:
     async with AsyncSessionLocal() as db:
-        return await recover_figure_render_jobs(
-            db,
-            queue_name=settings.figure_render_queue_name,
-            stale_after_seconds=settings.figure_render_job_recovery_age_seconds,
-        )
+        return await recover_figure_render_jobs(db, queue_name=settings.figure_render_queue_name, stale_after_seconds=settings.figure_render_job_recovery_age_seconds)
 
 
 async def run_worker() -> None:
+    configure_tracing(service_name="booktranslate-figure-render-worker")
     storage = create_storage(settings)
     owner = new_worker_id("figure-render")
     logger.info("Figure render worker %s recovered %s jobs", owner, await _recover())
     while True:
-        job_id = await dequeue_job(
-            queue_name=settings.figure_render_queue_name,
-            timeout_seconds=settings.figure_render_worker_poll_seconds,
-        )
+        job_id = await dequeue_job(queue_name=settings.figure_render_queue_name, timeout_seconds=settings.figure_render_worker_poll_seconds)
         if job_id is None:
             recovered = await _recover()
             if recovered:
