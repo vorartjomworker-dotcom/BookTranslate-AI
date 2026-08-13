@@ -4,11 +4,13 @@ import uuid
 
 import httpx
 import pytest
+from sqlalchemy import delete, select
 
 from app.core.config import settings
 from app.db import AsyncSessionLocal, engine
 from app.main import app
 from app.models.app_user import AppUser
+from app.models.audit_event import AuditEvent
 
 pytestmark = pytest.mark.skipif(os.getenv("RUN_DB_INTEGRATION") != "1", reason="requires migrated PostgreSQL")
 
@@ -85,6 +87,27 @@ async def _run() -> None:
             assert stored.scim_managed is True
             assert stored.scim_external_id == "idp-stage10-1"
             assert stored.is_active is False
+
+            audit_rows = list(
+                (
+                    await db.execute(
+                        select(AuditEvent).where(
+                            AuditEvent.resource_type == "scim",
+                            AuditEvent.resource_id.like("/scim/v2/Users%"),
+                        )
+                    )
+                ).scalars().all()
+            )
+            assert any(row.action == "POST /scim/v2/Users" for row in audit_rows)
+            assert any(row.action == "PATCH /scim/v2/Users/{user_id}" for row in audit_rows)
+            assert any(row.action == "DELETE /scim/v2/Users/{user_id}" for row in audit_rows)
+
+            await db.execute(
+                delete(AuditEvent).where(
+                    AuditEvent.resource_type == "scim",
+                    AuditEvent.resource_id.like("/scim/v2/Users%"),
+                )
+            )
             await db.delete(stored)
             await db.commit()
     finally:
