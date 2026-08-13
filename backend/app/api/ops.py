@@ -19,11 +19,25 @@ from app.redis_client import check_redis
 router = APIRouter(tags=["operations"])
 
 
+def _metrics_candidate(x_metrics_token: str | None, authorization: str | None) -> str | None:
+    if x_metrics_token:
+        return x_metrics_token
+    if authorization:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "bearer" and token.strip():
+            return token.strip()
+    return None
+
+
 @router.get("/metrics", include_in_schema=False)
-async def metrics(x_metrics_token: str | None = Header(default=None, alias="X-Metrics-Token")) -> Response:
+async def metrics(
+    x_metrics_token: str | None = Header(default=None, alias="X-Metrics-Token"),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> Response:
     configured = settings.metrics_token
     if configured:
-        if not x_metrics_token or not secrets.compare_digest(configured, x_metrics_token):
+        candidate = _metrics_candidate(x_metrics_token, authorization)
+        if not candidate or not secrets.compare_digest(configured, candidate):
             raise HTTPException(status_code=403, detail="Invalid metrics token")
     elif settings.auth_required:
         raise HTTPException(status_code=503, detail="METRICS_TOKEN must be configured when AUTH_REQUIRED=true")
