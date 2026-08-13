@@ -3,9 +3,8 @@ from __future__ import annotations
 import re
 import secrets
 import uuid
-from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -297,8 +296,13 @@ async def patch_scim_user(user_id: uuid.UUID, request: Request, payload: dict, d
     return _user_out(request, user)
 
 
-@router.delete("/Users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_scim)])
-async def delete_scim_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> None:
+@router.delete(
+    "/Users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    dependencies=[Depends(require_scim)],
+)
+async def delete_scim_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> Response:
     user = await db.get(AppUser, user_id)
     if user is None:
         raise _scim_error(404, "User not found")
@@ -306,6 +310,7 @@ async def delete_scim_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db
     user.scim_managed = True
     await revoke_all_user_sessions(db, user_id=user.id)
     await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/Groups", dependencies=[Depends(require_scim)])
