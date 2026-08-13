@@ -36,8 +36,8 @@ def upgrade() -> None:
         sa.Column("evaluator_fingerprint", sa.String(length=64), nullable=False),
         sa.Column("issues_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("details_json", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["translation_version_id"], ["translation_versions.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
