@@ -12,12 +12,16 @@ x-app-environment: &app-environment
   S3_SECRET_KEY_FILE: /run/secrets/s3_secret_key
   S3_USE_SSL: "false"
   S3_ADDRESSING_STYLE: path
+  S3_PRESIGN_DOWNLOADS: "false"
   STORAGE_PRESIGN_TTL_SECONDS: ${STORAGE_PRESIGN_TTL_SECONDS:-120}
   AUTH_REQUIRED: "true"
   BOOTSTRAP_ADMIN_TOKEN_FILE: /run/secrets/bootstrap_admin_token
   AUTH_SIGNING_SECRET_FILE: /run/secrets/auth_signing_secret
   DOWNLOAD_TICKET_TTL_SECONDS: ${DOWNLOAD_TICKET_TTL_SECONDS:-120}
   CORS_ORIGINS: https://${APP_DOMAIN}
+  SESSION_ACCESS_TTL_SECONDS: ${SESSION_ACCESS_TTL_SECONDS:-28800}
+  SESSION_REFRESH_TTL_SECONDS: ${SESSION_REFRESH_TTL_SECONDS:-2592000}
+  SESSION_MAX_ACTIVE_PER_USER: ${SESSION_MAX_ACTIVE_PER_USER:-20}
   OIDC_ENABLED: ${OIDC_ENABLED:-false}
   OIDC_ISSUER: ${OIDC_ISSUER:-}
   OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
@@ -27,6 +31,10 @@ x-app-environment: &app-environment
   OIDC_SCOPES: ${OIDC_SCOPES:-openid email profile}
   OIDC_ROLE_CLAIM: ${OIDC_ROLE_CLAIM:-booktranslate_role}
   OIDC_DEFAULT_ROLE: ${OIDC_DEFAULT_ROLE:-viewer}
+  SCIM_ENABLED: ${SCIM_ENABLED:-false}
+  SCIM_BEARER_TOKEN_FILE: /run/secrets/scim_bearer_token
+  SCIM_DEFAULT_ROLE: ${SCIM_DEFAULT_ROLE:-viewer}
+  SCIM_ROLE_GROUP_PREFIX: ${SCIM_ROLE_GROUP_PREFIX:-BookTranslate-}
   AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-120}
   OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
   OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
@@ -36,6 +44,9 @@ x-app-environment: &app-environment
   GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
   AITUNNEL_API_KEY_FILE: /run/secrets/aitunnel_api_key
   AITUNNEL_BASE_URL: ${AITUNNEL_BASE_URL:-https://api.aitunnel.ru/v1}
+  PROVIDER_FEEDBACK_TTL_SECONDS: ${PROVIDER_FEEDBACK_TTL_SECONDS:-300}
+  PROVIDER_COOLDOWN_DEFAULT_SECONDS: ${PROVIDER_COOLDOWN_DEFAULT_SECONDS:-60}
+  PROVIDER_MIN_REMAINING_REQUESTS: ${PROVIDER_MIN_REMAINING_REQUESTS:-1}
   VISION_PROVIDER: ${VISION_PROVIDER:-openai}
   VISION_MODEL: ${VISION_MODEL:-}
   VISION_QUEUE_NAME: vision
@@ -45,6 +56,12 @@ x-app-environment: &app-environment
   FIGURE_RENDER_WORKER_POLL_SECONDS: ${FIGURE_RENDER_WORKER_POLL_SECONDS:-5}
   FIGURE_RENDER_JOB_RECOVERY_AGE_SECONDS: ${FIGURE_RENDER_JOB_RECOVERY_AGE_SECONDS:-900}
   FIGURE_FONT_PATH: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+  FIGURE_RENDER_MIN_FONT_SIZE: ${FIGURE_RENDER_MIN_FONT_SIZE:-8}
+  FIGURE_RENDER_MAX_FONT_SIZE: ${FIGURE_RENDER_MAX_FONT_SIZE:-48}
+  FIGURE_RENDER_PADDING_PX: ${FIGURE_RENDER_PADDING_PX:-2}
+  FIGURE_RENDER_DEFAULT_MODE: ${FIGURE_RENDER_DEFAULT_MODE:-inpaint}
+  FIGURE_INPAINT_RADIUS_PX: ${FIGURE_INPAINT_RADIUS_PX:-3}
+  FIGURE_VECTOR_SVG_ENABLED: ${FIGURE_VECTOR_SVG_ENABLED:-true}
   TRANSLATION_QUEUE_NAME: translation
   TRANSLATION_WORKER_POLL_SECONDS: ${TRANSLATION_WORKER_POLL_SECONDS:-5}
   TRANSLATION_JOB_RECOVERY_AGE_SECONDS: ${TRANSLATION_JOB_RECOVERY_AGE_SECONDS:-900}
@@ -64,6 +81,7 @@ x-app-secrets: &app-secrets
   - bootstrap_admin_token
   - auth_signing_secret
   - oidc_client_secret
+  - scim_bearer_token
   - s3_access_key
   - s3_secret_key
   - openai_api_key
@@ -281,6 +299,8 @@ secrets:
     file: ./secrets/auth_signing_secret.txt
   oidc_client_secret:
     file: ./secrets/oidc_client_secret.txt
+  scim_bearer_token:
+    file: ./secrets/scim_bearer_token.txt
   s3_access_key:
     file: ./secrets/s3_access_key.txt
   s3_secret_key:
