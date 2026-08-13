@@ -10,6 +10,7 @@ from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
 from docx.table import Table as DocxTable
 from docx.text.paragraph import Paragraph
+from lxml import etree
 
 from app.services.document_parser import (
     NormalizedAsset,
@@ -50,6 +51,42 @@ def _iter_body_items(document: DocxDocument) -> Iterator[Paragraph | DocxTable]:
             yield Paragraph(child, document)
         elif isinstance(child, CT_Tbl):
             yield DocxTable(child, document)
+
+
+def _paragraph_inline_metadata(paragraph: Paragraph, document: DocxDocument) -> dict:
+    hyperlinks = []
+    for hyperlink in paragraph._p.xpath(".//w:hyperlink"):
+        relation_id = hyperlink.get(qn("r:id"))
+        anchor = hyperlink.get(qn("w:anchor"))
+        href = None
+        if relation_id:
+            relationship = document.part.rels.get(relation_id)
+            if relationship is not None:
+                href = getattr(relationship, "target_ref", None)
+        if not href and anchor:
+            href = f"#{anchor}"
+        text = "".join(node.text or "" for node in hyperlink.xpath(".//w:t")).strip()
+        if href:
+            hyperlinks.append({"href": str(href), "text": text})
+
+    footnote_references = []
+    for reference in paragraph._p.xpath(".//w:footnoteReference"):
+        value = reference.get(qn("w:id"))
+        if value is not None:
+            footnote_references.append(str(value))
+
+    omml = []
+    for math in paragraph._p.xpath(".//m:oMath | .//m:oMathPara"):
+        omml.append(etree.tostring(math, encoding="unicode"))
+
+    metadata: dict = {}
+    if hyperlinks:
+        metadata["hyperlinks"] = hyperlinks
+    if footnote_references:
+        metadata["footnote_references"] = footnote_references
+    if omml:
+        metadata["omml"] = omml
+    return metadata
 
 
 def _register_asset(
@@ -119,6 +156,7 @@ def _append_text_block(
     style_name: str,
     section_position: int | None,
     last_target_block_position: int | None,
+    inline_metadata: dict,
 ) -> int | None:
     if _is_caption_style(style_name):
         chapter.paragraphs.append(text)
@@ -131,13 +169,14 @@ def _append_text_block(
                 metadata_json={
                     "style": style_name,
                     "target_block_position": last_target_block_position,
+                    **inline_metadata,
                 },
             )
         )
         return last_target_block_position
 
     block_type = _block_type(style_name)
-    metadata = {"style": style_name}
+    metadata = {"style": style_name, **inline_metadata}
     if block_type == "list_item":
         lowered = style_name.lower()
         metadata["list_kind"] = "number" if "number" in lowered or "нумер" in lowered else "bullet"
@@ -194,6 +233,7 @@ def parse_docx(path: Path) -> NormalizedDocument:
         text = paragraph.text.strip()
         style_name = (paragraph.style.name or "") if paragraph.style else ""
         heading_level = _heading_level(style_name)
+        inline_metadata = _paragraph_inline_metadata(paragraph, document)
 
         if heading_level == 1 and text:
             if current.paragraphs or current.title or current.blocks:
@@ -218,7 +258,7 @@ def parse_docx(path: Path) -> NormalizedDocument:
                     level=heading_level,
                     title=text,
                     parent_position=parent_position,
-                    metadata_json={"style": style_name},
+                    metadata_json={"style": style_name, **inline_metadata},
                 )
             )
             current.blocks.append(
@@ -227,7 +267,7 @@ def parse_docx(path: Path) -> NormalizedDocument:
                     block_type="heading",
                     source_text=text,
                     section_position=section_position,
-                    metadata_json={"level": heading_level, "style": style_name},
+                    metadata_json={"level": heading_level, "style": style_name, **inline_metadata},
                 )
             )
             section_stack = {level: pos for level, pos in section_stack.items() if level < heading_level}
@@ -242,6 +282,7 @@ def parse_docx(path: Path) -> NormalizedDocument:
                 style_name,
                 current_section_position,
                 last_target_block_position,
+                inline_metadata,
             )
 
         for asset_position, alt_text in _paragraph_images(paragraph, document, assets, assets_by_hash):
