@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { apiFetch, apiUrl } from "../../lib/api";
 
 type Segment = {
   id: string;
@@ -85,10 +84,13 @@ export default function BookWorkspace() {
 
   async function load() {
     const [workspaceResponse, issuesResponse] = await Promise.all([
-      fetch(`${apiUrl}/api/books/${bookId}/workbench`, { cache: "no-store" }),
-      fetch(`${apiUrl}/api/books/${bookId}/terminology-issues`, { cache: "no-store" }),
+      apiFetch(`/api/books/${bookId}/workbench`, { cache: "no-store" }),
+      apiFetch(`/api/books/${bookId}/terminology-issues`, { cache: "no-store" }),
     ]);
-    if (!workspaceResponse.ok) throw new Error(`Workbench returned ${workspaceResponse.status}`);
+    if (!workspaceResponse.ok) {
+      if (workspaceResponse.status === 401) throw new Error("Authentication required. Add your API token in Reviewer Inbox.");
+      throw new Error(`Workbench returned ${workspaceResponse.status}`);
+    }
     const workspace: Workbench = await workspaceResponse.json();
     setData(workspace);
     if (issuesResponse.ok) setIssues(await issuesResponse.json());
@@ -126,10 +128,10 @@ export default function BookWorkspace() {
     setBusy(true);
     setMessage(null);
     try {
-      const response = await fetch(`${apiUrl}/api/translations/${selected.translation_id}/editor-version`, {
+      const response = await apiFetch(`/api/translations/${selected.translation_id}/editor-version`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: draft, reviewer_id: "workbench-editor", notes: "Edited in Stage 6 workbench" }),
+        body: JSON.stringify({ text: draft, notes: "Edited in translator workbench" }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail ?? `Save failed with ${response.status}`);
@@ -147,7 +149,7 @@ export default function BookWorkspace() {
     setBusy(true);
     setMessage(null);
     try {
-      const response = await fetch(`${apiUrl}/api/books/${bookId}/qa-report`, {
+      const response = await apiFetch(`/api/books/${bookId}/qa-report`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target_language: data.book.target_language, low_quality_threshold: 80 }),
@@ -164,7 +166,7 @@ export default function BookWorkspace() {
   }
 
   async function setIssueStatus(issueId: string, status: "resolved" | "ignored") {
-    const response = await fetch(`${apiUrl}/api/terminology-issues/${issueId}/status`, {
+    const response = await apiFetch(`/api/terminology-issues/${issueId}/status`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status }),
@@ -191,6 +193,7 @@ export default function BookWorkspace() {
           </div>
         </div>
         <div className="workspace-actions">
+          <Link className="button ghost" href="/reviews">Reviewer inbox</Link>
           <button className="button ghost" onClick={() => void rebuildQA()} disabled={busy}>Rebuild QA</button>
           <a className="button ghost" href={`${apiUrl}/api/books/${bookId}/export/translated.docx`}>DOCX</a>
           <a className="button primary" href={`${apiUrl}/api/books/${bookId}/export/translated.epub`}>EPUB</a>
@@ -284,7 +287,7 @@ export default function BookWorkspace() {
               </div>
               <div className="fidelity-bar">
                 <span>Fidelity metadata</span>
-                <code>{Object.keys(selected.metadata ?? {}).filter((key) => ["hyperlinks", "mathml", "omml", "footnote_refs", "footnote_references"].includes(key)).join(" · ") || "none"}</code>
+                <code>{Object.keys(selected.metadata ?? {}).filter((key) => ["hyperlinks", "mathml", "omml", "footnote_refs", "footnote_references", "endnote_references", "note_id", "note_type"].includes(key)).join(" · ") || "none"}</code>
               </div>
             </>
           ) : <div className="empty-state">Select a segment to open the editor.</div>}
