@@ -26,6 +26,32 @@ def _block_type(tag_name: str) -> str:
     return {"pre": "code", "blockquote": "blockquote", "li": "list_item"}.get(tag_name, "paragraph")
 
 
+def _inline_metadata(element) -> dict:
+    hyperlinks = []
+    footnote_refs = []
+    for anchor in element.find_all("a", href=True):
+        href = str(anchor.get("href") or "")
+        label = anchor.get_text(" ", strip=True)
+        epub_type = str(anchor.get("epub:type") or anchor.get("type") or "")
+        item = {"href": href, "text": label, "epub_type": epub_type or None}
+        hyperlinks.append(item)
+        if "noteref" in epub_type or href.startswith("#"):
+            footnote_refs.append(item)
+    mathml = [str(math) for math in element.find_all("math")]
+    metadata: dict = {}
+    if hyperlinks:
+        metadata["hyperlinks"] = hyperlinks
+    if footnote_refs:
+        metadata["footnote_refs"] = footnote_refs
+    if mathml:
+        metadata["mathml"] = mathml
+    if element.get("id"):
+        metadata["source_id"] = str(element.get("id"))
+    if hyperlinks or mathml:
+        metadata["source_inline_html"] = "".join(str(child) for child in element.contents)
+    return metadata
+
+
 def _find_item(book: epub.EpubBook, current_name: str, href: str):
     href = href.split("#", 1)[0]
     resolved = posixpath.normpath(posixpath.join(posixpath.dirname(current_name), href))
@@ -113,13 +139,14 @@ def parse_epub(path: Path) -> NormalizedDocument:
                         parent_position = section_stack[candidate_level]
                         break
                 section_position = len(chapter.sections)
+                inline = _inline_metadata(element)
                 chapter.sections.append(
                     NormalizedSection(
                         position=section_position,
                         level=level,
                         title=text,
                         parent_position=parent_position,
-                        metadata_json={"tag": tag_name, "item_id": item_id},
+                        metadata_json={"tag": tag_name, "item_id": item_id, **inline},
                     )
                 )
                 chapter.blocks.append(
@@ -128,7 +155,7 @@ def parse_epub(path: Path) -> NormalizedDocument:
                         block_type="heading",
                         source_text=text,
                         section_position=section_position,
-                        metadata_json={"level": level, "tag": tag_name},
+                        metadata_json={"level": level, "tag": tag_name, **inline},
                     )
                 )
                 section_stack = {key: value for key, value in section_stack.items() if key < level}
@@ -187,6 +214,7 @@ def parse_epub(path: Path) -> NormalizedDocument:
                             "rows_count": len(cells),
                             "columns_count": max((len(row) for row in cells), default=0),
                             "tag": "table",
+                            **_inline_metadata(element),
                         },
                     )
                 )
@@ -207,13 +235,14 @@ def parse_epub(path: Path) -> NormalizedDocument:
                         metadata_json={
                             "tag": tag_name,
                             "target_block_position": last_target_block_position,
+                            **_inline_metadata(element),
                         },
                     )
                 )
                 continue
 
             chapter.paragraphs.append(text)
-            metadata = {"tag": tag_name, "item_id": item_id}
+            metadata = {"tag": tag_name, "item_id": item_id, **_inline_metadata(element)}
             if tag_name == "li":
                 parent = element.find_parent(["ol", "ul"])
                 metadata["list_kind"] = "number" if parent and parent.name == "ol" else "bullet"
