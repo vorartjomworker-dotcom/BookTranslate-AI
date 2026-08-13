@@ -1,5 +1,4 @@
 import asyncio
-import io
 
 import pytest
 
@@ -52,7 +51,7 @@ async def _run_local(tmp_path) -> None:
 
 async def _run_s3() -> None:
     client = FakeS3Client()
-    storage = S3Storage(
+    private_storage = S3Storage(
         bucket="books",
         endpoint_url="http://minio:9000",
         region="us-east-1",
@@ -62,14 +61,27 @@ async def _run_s3() -> None:
         addressing_style="path",
         client=client,
     )
-    await storage.put_bytes("renders/a.png", b"png", content_type="image/png")
-    assert await storage.exists("renders/a.png")
-    assert await storage.get_bytes("renders/a.png") == b"png"
-    assert (await storage.presign_get_url("renders/a.png", expires_seconds=90)) == "https://objects.test/books/renders/a.png?expires=90"
-    await storage.delete("renders/a.png")
-    assert not await storage.exists("renders/a.png")
+    await private_storage.put_bytes("renders/a.png", b"png", content_type="image/png")
+    assert await private_storage.exists("renders/a.png")
+    assert await private_storage.get_bytes("renders/a.png") == b"png"
+    assert await private_storage.presign_get_url("renders/a.png", expires_seconds=90) is None
+
+    public_storage = S3Storage(
+        bucket="books",
+        endpoint_url="https://objects.test",
+        region="us-east-1",
+        access_key="test",
+        secret_key="test",
+        use_ssl=True,
+        addressing_style="path",
+        presign_downloads=True,
+        client=client,
+    )
+    assert (await public_storage.presign_get_url("renders/a.png", expires_seconds=90)) == "https://objects.test/books/renders/a.png?expires=90"
+    await private_storage.delete("renders/a.png")
+    assert not await private_storage.exists("renders/a.png")
     with pytest.raises(ValueError):
-        await storage.get_bytes("../../secret")
+        await private_storage.get_bytes("../../secret")
 
 
 def test_local_storage_round_trip(tmp_path) -> None:
