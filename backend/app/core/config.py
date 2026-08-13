@@ -7,7 +7,9 @@ class Settings(BaseSettings):
     app_name: str = "BookTranslate AI API"
     app_environment: str = "development"
     database_url: str = "postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate"
+    database_url_file: str | None = None
     redis_url: str = "redis://redis:6379/0"
+    redis_url_file: str | None = None
     upload_dir: str = "/data/uploads"
     max_upload_size_mb: int = 100
 
@@ -96,6 +98,8 @@ class Settings(BaseSettings):
 
     def model_post_init(self, __context) -> None:
         secret_files = {
+            "database_url": self.database_url_file,
+            "redis_url": self.redis_url_file,
             "s3_access_key": self.s3_access_key_file,
             "s3_secret_key": self.s3_secret_key_file,
             "bootstrap_admin_token": self.bootstrap_admin_token_file,
@@ -108,7 +112,7 @@ class Settings(BaseSettings):
             "metrics_token": self.metrics_token_file,
         }
         for field_name, file_name in secret_files.items():
-            if getattr(self, field_name) or not file_name:
+            if not file_name:
                 continue
             value = Path(file_name).read_text(encoding="utf-8").strip()
             if value:
