@@ -21,9 +21,11 @@ class S3Storage(StorageBackend):
         secret_key: str | None,
         use_ssl: bool,
         addressing_style: str,
+        presign_downloads: bool = False,
         client: Any | None = None,
     ):
         self.bucket = bucket
+        self.presign_downloads = presign_downloads
         self.client = client or boto3.client(
             "s3",
             endpoint_url=endpoint_url,
@@ -69,6 +71,8 @@ class S3Storage(StorageBackend):
         await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=object_key)
 
     async def presign_get_url(self, key: str, *, expires_seconds: int) -> str | None:
+        if not self.presign_downloads:
+            return None
         object_key = self._validate_key(key)
         return await asyncio.to_thread(
             self.client.generate_presigned_url,
