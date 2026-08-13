@@ -6,6 +6,7 @@ import logging
 from app.ai.gateway import ModelGateway
 from app.core.config import settings
 from app.db import AsyncSessionLocal, engine
+from app.observability import configure_tracing
 from app.redis_client import redis_client
 from app.services.job_queue import dequeue_job
 from app.services.translation_jobs import process_job, recover_jobs
@@ -17,23 +18,16 @@ logger = logging.getLogger("booktranslate.translation_worker")
 
 async def _recover() -> int:
     async with AsyncSessionLocal() as db:
-        return await recover_jobs(
-            db,
-            queue_name=settings.translation_queue_name,
-            stale_after_seconds=settings.translation_job_recovery_age_seconds,
-        )
+        return await recover_jobs(db, queue_name=settings.translation_queue_name, stale_after_seconds=settings.translation_job_recovery_age_seconds)
 
 
 async def run_worker() -> None:
+    configure_tracing(service_name="booktranslate-translation-worker")
     gateway = ModelGateway.from_settings(settings)
     owner = new_worker_id("translation")
     logger.info("Translation worker %s recovered %s jobs", owner, await _recover())
-
     while True:
-        job_id = await dequeue_job(
-            queue_name=settings.translation_queue_name,
-            timeout_seconds=settings.translation_worker_poll_seconds,
-        )
+        job_id = await dequeue_job(queue_name=settings.translation_queue_name, timeout_seconds=settings.translation_worker_poll_seconds)
         if job_id is None:
             recovered = await _recover()
             if recovered:
