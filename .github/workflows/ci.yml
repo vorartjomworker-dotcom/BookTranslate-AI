@@ -57,7 +57,7 @@ jobs:
         with:
           version: v4.2.0
       - run: pip install -r requirements-dev.txt
-      - run: python -m compileall app alembic tests
+      - run: python -m compileall app alembic tests evals
       - name: Validate GitHub workflow YAML
         shell: bash
         run: |
@@ -131,12 +131,30 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$code"
-      - name: Upload pytest output
+      - name: Run translation quality regression
+        shell: bash
+        run: |
+          set +e
+          python evals/run_quality_regression.py \
+            --dataset evals/golden_translation_cases.json \
+            --report quality-regression.json 2>&1 | tee quality-regression-output.txt
+          code=${PIPESTATUS[0]}
+          {
+            echo "### Translation quality regression"
+            echo '```text'
+            cat quality-regression-output.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$code"
+      - name: Upload backend quality artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: backend-pytest-output
-          path: backend/pytest-output.txt
+          name: backend-quality-evidence
+          path: |
+            backend/pytest-output.txt
+            backend/quality-regression.json
+            backend/quality-regression-output.txt
           if-no-files-found: warn
 
   frontend:

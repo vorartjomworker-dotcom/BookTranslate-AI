@@ -18,6 +18,7 @@ from app.models.segment import Segment
 from app.models.translation_job import TranslationJob
 from app.services.human_review import request_human_review
 from app.services.job_queue import enqueue_job
+from app.services.quality_evaluation import evaluate_translation_quality_v2
 from app.services.translation_engine import ModelStage, run_translation_pipeline
 from app.services.translation_qa import QAEvaluator, evaluate_translation_version
 
@@ -195,6 +196,9 @@ async def process_job(db: AsyncSession, gateway: ModelGateway, job_id: uuid.UUID
     stop_on_error = bool(config.get("stop_on_error", False))
     min_quality_score = config.get("min_quality_score")
     human_review_below = config.get("human_review_below")
+    quality_v2_enabled = bool(config.get("quality_v2_enabled", True))
+    deterministic_weight = float(config.get("quality_deterministic_weight", 0.45))
+    judge_weight = float(config.get("quality_judge_weight", 0.55))
     errors = list(job.errors_json or [])
 
     for segment in segments:
@@ -242,17 +246,54 @@ async def process_job(db: AsyncSession, gateway: ModelGateway, job_id: uuid.UUID
                 return job
             continue
 
-        if versions and evaluators:
-            try:
-                score, _results = await evaluate_translation_version(db, gateway, version_id=versions[-1].id, evaluators=evaluators, translation_job_id=job.id)
-                if min_quality_score is not None and score < float(min_quality_score):
-                    errors.append({"segment_id": str(segment.id), "kind": "low_quality", "score": score, "minimum": float(min_quality_score)})
+        if versions:
+            judge_score: float | None = None
+            if evaluators:
+                try:
+                    judge_score, _results = await evaluate_translation_version(
+                        db,
+                        gateway,
+                        version_id=versions[-1].id,
+                        evaluators=evaluators,
+                        translation_job_id=job.id,
+                    )
+                except Exception as exc:
+                    errors.append({"segment_id": str(segment.id), "kind": "qa_error", "error": str(exc)[:2000]})
                     job.errors_json = errors
-                if human_review_below is not None and score < float(human_review_below):
-                    await request_human_review(db, version_id=versions[-1].id, notes=f"Automatic review request: QA {score:.2f} < {float(human_review_below):.2f}", metadata={"source": "translation_job", "job_id": str(job.id), "qa_score": score, "threshold": float(human_review_below)})
-            except Exception as exc:
-                errors.append({"segment_id": str(segment.id), "kind": "qa_error", "error": str(exc)[:2000]})
-                job.errors_json = errors
+
+            effective_score = judge_score
+            if quality_v2_enabled:
+                try:
+                    quality = await evaluate_translation_quality_v2(
+                        db,
+                        version_id=versions[-1].id,
+                        judge_score=judge_score,
+                        deterministic_weight=deterministic_weight,
+                        judge_weight=judge_weight,
+                        evaluation_mode="translation_job",
+                    )
+                    effective_score = quality.final_score
+                    if quality.critical_fail:
+                        errors.append(
+                            {
+                                "segment_id": str(segment.id),
+                                "kind": "quality_critical_fail",
+                                "score": quality.final_score,
+                                "issues": quality.issues_json[:20],
+                            }
+                        )
+                        job.errors_json = errors
+                except Exception as exc:
+                    errors.append({"segment_id": str(segment.id), "kind": "quality_v2_error", "error": str(exc)[:2000]})
+                    job.errors_json = errors
+
+            if effective_score is not None:
+                if min_quality_score is not None and effective_score < float(min_quality_score):
+                    errors.append({"segment_id": str(segment.id), "kind": "low_quality", "score": effective_score, "minimum": float(min_quality_score), "score_schema": "quality-v2" if quality_v2_enabled else "qa-v1"})
+                    job.errors_json = errors
+                if human_review_below is not None and effective_score < float(human_review_below):
+                    await request_human_review(db, version_id=versions[-1].id, notes=f"Automatic review request: quality {effective_score:.2f} < {float(human_review_below):.2f}", metadata={"source": "translation_job", "job_id": str(job.id), "quality_score": effective_score, "threshold": float(human_review_below), "score_schema": "quality-v2" if quality_v2_enabled else "qa-v1"})
+
         job.completed_segments += 1
         await _refresh_job_telemetry(db, job)
         if await _stop_for_budget(db, job, config, errors, segment_id=segment.id):

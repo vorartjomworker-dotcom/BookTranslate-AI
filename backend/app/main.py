@@ -13,6 +13,7 @@ from app.api.jobs import router as jobs_router
 from app.api.model_policies import router as model_policies_router
 from app.api.ops import router as ops_router
 from app.api.qa import router as qa_router
+from app.api.quality import router as quality_router
 from app.api.reviewer import router as reviewer_router
 from app.api.reviews import router as reviews_router
 from app.api.scim import router as scim_router
@@ -26,7 +27,7 @@ from app.http_middleware import SecurityObservabilityMiddleware
 from app.observability import configure_tracing
 from app.redis_client import check_redis
 
-app = FastAPI(title=settings.app_name, version="0.11.0")
+app = FastAPI(title=settings.app_name, version="0.12.0")
 configure_tracing(app=app)
 
 app.add_middleware(SecurityObservabilityMiddleware)
@@ -49,6 +50,7 @@ app.include_router(jobs_router)
 app.include_router(vision_router)
 app.include_router(figure_renders_router)
 app.include_router(qa_router)
+app.include_router(quality_router)
 app.include_router(reviews_router)
 app.include_router(reviewer_router)
 app.include_router(book_qa_router)

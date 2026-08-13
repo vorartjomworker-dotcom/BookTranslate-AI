@@ -24,6 +24,7 @@ from app.models.translation import Translation
 from app.models.translation_job import TranslationJob
 from app.models.translation_memory import TranslationMemoryEntry
 from app.models.translation_qa_result import TranslationQAResult
+from app.models.translation_quality_evaluation import TranslationQualityEvaluation
 from app.models.translation_version import TranslationVersion
 from app.models.user_session import UserSession
 from app.models.vision_extraction import VisionExtraction
@@ -53,6 +54,7 @@ __all__ = [
     "ModelRun",
     "TranslationJob",
     "TranslationQAResult",
+    "TranslationQualityEvaluation",
     "HumanReview",
     "ReviewComment",
     "BookQAReport",
