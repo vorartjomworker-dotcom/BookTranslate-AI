@@ -36,7 +36,7 @@ def test_extra_numbers_reduce_hallucination_score() -> None:
         "The worker reads the queue.",
         "Воркер читает очередь со скоростью 10000 сообщений и использует 8 потоков.",
     )
-    assert result.hallucination_score <= 70
+    assert result.hallucination_score <= 60
     assert any(item["kind"] == "extra_numeric_anchor" for item in result.issues)
 
 
@@ -48,6 +48,25 @@ def test_glossary_violation_is_measurable() -> None:
     )
     assert result.terminology_score == 0
     assert any(item["kind"] == "terminology" for item in result.issues)
+
+
+def test_cli_number_before_word_is_not_misread_as_byte_unit() -> None:
+    result = score_translation_deterministically(
+        "Configure --max-batch=64 before starting matching_engine.cpp.",
+        "Перед запуском matching_engine.cpp настройте --max-batch=64.",
+    )
+    assert result.technical_integrity_score == 100
+    assert result.critical_fail is False
+    assert not any(item["kind"] in {"missing_numeric_anchor", "extra_numeric_anchor"} for item in result.issues)
+
+
+def test_preserved_url_is_not_source_language_leakage() -> None:
+    result = score_translation_deterministically(
+        "Send the request to https://api.example.test/v1/orders and continue.",
+        "Отправьте запрос на https://api.example.test/v1/orders и продолжайте.",
+    )
+    assert result.source_leakage_score == 100
+    assert not any(item["kind"] == "source_leakage" for item in result.issues)
 
 
 def test_critical_fail_caps_combined_llm_score() -> None:
