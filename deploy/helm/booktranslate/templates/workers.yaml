@@ -1,0 +1,42 @@
+{{- range $name, $worker := .Values.workers }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "booktranslate.fullname" $ }}-{{ $name | lower }}-worker
+  labels:
+    {{- include "booktranslate.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name | lower }}-worker
+spec:
+  replicas: {{ $worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "booktranslate.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $name | lower }}-worker
+  template:
+    metadata:
+      labels:
+        {{- include "booktranslate.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $name | lower }}-worker
+    spec:
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: worker
+          image: "{{ $.Values.backend.image.repository }}:{{ $.Values.backend.image.tag }}"
+          imagePullPolicy: {{ $.Values.backend.image.pullPolicy }}
+          command:
+            {{- toYaml $worker.command | nindent 12 }}
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          env:
+            {{- include "booktranslate.configEnv" $ | nindent 12 }}
+            {{- include "booktranslate.secretEnv" $ | nindent 12 }}
+          resources:
+            {{- toYaml $worker.resources | nindent 12 }}
+---
+{{- end }}
