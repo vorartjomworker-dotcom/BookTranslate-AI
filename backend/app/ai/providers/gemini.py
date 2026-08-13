@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 
 from app.ai.providers.base import ModelProvider
+from app.ai.rate_limits import normalize_rate_limit_headers
 from app.ai.schemas import ModelRequest, ModelResponse
 
 
@@ -35,7 +36,7 @@ class GeminiProvider(ModelProvider):
             raise RuntimeError("Gemini returned an empty text response")
         return text
 
-    async def _post(self, payload: dict) -> dict:
+    async def _post(self, payload: dict) -> httpx.Response:
         headers = {
             "x-goog-api-key": self.api_key,
             "Content-Type": "application/json",
@@ -47,7 +48,7 @@ class GeminiProvider(ModelProvider):
                 json=payload,
             )
             response.raise_for_status()
-            return response.json()
+            return response
 
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.post(
@@ -56,7 +57,7 @@ class GeminiProvider(ModelProvider):
                 json=payload,
             )
             response.raise_for_status()
-            return response.json()
+            return response
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         generation_config: dict = {}
@@ -74,14 +75,16 @@ class GeminiProvider(ModelProvider):
         if generation_config:
             payload["generation_config"] = generation_config
 
-        data = await self._post(payload)
+        http_response = await self._post(payload)
+        data = http_response.json()
         usage = data.get("usage") or {}
+        rate_limit = normalize_rate_limit_headers(http_response.headers)
         return ModelResponse(
             text=self._extract_text(data),
             provider=self.name,
             model=str(data.get("model") or request.model),
-            request_id=data.get("id"),
+            request_id=data.get("id") or rate_limit.get("request_id"),
             input_tokens=usage.get("total_input_tokens"),
             output_tokens=usage.get("total_output_tokens"),
-            metadata={"status": data.get("status")},
+            metadata={"status": data.get("status"), "rate_limit": rate_limit},
         )
