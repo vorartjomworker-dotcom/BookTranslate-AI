@@ -1,5 +1,6 @@
 import hashlib
 import re
+import zipfile
 from pathlib import Path
 from typing import Iterator
 
@@ -22,6 +23,7 @@ from app.services.document_parser import (
 
 
 _HEADING_LEVEL = re.compile(r"(?:heading|заголовок)\s*(\d+)", re.IGNORECASE)
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
 def _heading_level(style_name: str) -> int | None:
@@ -53,6 +55,38 @@ def _iter_body_items(document: DocxDocument) -> Iterator[Paragraph | DocxTable]:
             yield DocxTable(child, document)
 
 
+def _read_note_bodies(path: Path, note_type: str) -> dict[str, str]:
+    part_name = f"word/{note_type}s.xml"
+    element_name = note_type
+    try:
+        with zipfile.ZipFile(path) as archive:
+            if part_name not in archive.namelist():
+                return {}
+            root = etree.fromstring(archive.read(part_name))
+    except (KeyError, zipfile.BadZipFile, etree.XMLSyntaxError):
+        return {}
+
+    result: dict[str, str] = {}
+    for note in root.findall(f"{{{_W_NS}}}{element_name}"):
+        note_id = note.get(f"{{{_W_NS}}}id")
+        if note_id is None:
+            continue
+        try:
+            if int(note_id) <= 0:
+                continue
+        except ValueError:
+            pass
+        paragraphs: list[str] = []
+        for paragraph in note.findall(f".//{{{_W_NS}}}p"):
+            text = "".join(node.text or "" for node in paragraph.findall(f".//{{{_W_NS}}}t")).strip()
+            if text:
+                paragraphs.append(text)
+        body = "\n".join(paragraphs).strip()
+        if body:
+            result[str(note_id)] = body
+    return result
+
+
 def _paragraph_inline_metadata(paragraph: Paragraph, document: DocxDocument) -> dict:
     hyperlinks = []
     for hyperlink in paragraph._p.xpath(".//w:hyperlink"):
@@ -75,6 +109,12 @@ def _paragraph_inline_metadata(paragraph: Paragraph, document: DocxDocument) -> 
         if value is not None:
             footnote_references.append(str(value))
 
+    endnote_references = []
+    for reference in paragraph._p.xpath(".//w:endnoteReference"):
+        value = reference.get(qn("w:id"))
+        if value is not None:
+            endnote_references.append(str(value))
+
     omml = []
     for math in paragraph._p.xpath(".//m:oMath | .//m:oMathPara"):
         omml.append(etree.tostring(math, encoding="unicode"))
@@ -84,6 +124,8 @@ def _paragraph_inline_metadata(paragraph: Paragraph, document: DocxDocument) -> 
         metadata["hyperlinks"] = hyperlinks
     if footnote_references:
         metadata["footnote_references"] = footnote_references
+    if endnote_references:
+        metadata["endnote_references"] = endnote_references
     if omml:
         metadata["omml"] = omml
     return metadata
@@ -194,9 +236,42 @@ def _append_text_block(
     return last_target_block_position
 
 
+def _append_referenced_notes(
+    chapters: list[NormalizedChapter],
+    footnotes: dict[str, str],
+    endnotes: dict[str, str],
+) -> None:
+    emitted: set[tuple[str, str]] = set()
+    for chapter in chapters:
+        references: list[tuple[str, str]] = []
+        for block in chapter.blocks:
+            metadata = block.metadata_json or {}
+            references.extend(("footnote", str(value)) for value in metadata.get("footnote_references") or [])
+            references.extend(("endnote", str(value)) for value in metadata.get("endnote_references") or [])
+        for note_type, note_id in references:
+            key = (note_type, note_id)
+            if key in emitted:
+                continue
+            body = (footnotes if note_type == "footnote" else endnotes).get(note_id)
+            if not body:
+                continue
+            chapter.blocks.append(
+                NormalizedBlock(
+                    position=len(chapter.blocks),
+                    block_type=note_type,
+                    source_text=body,
+                    section_position=None,
+                    metadata_json={"note_id": note_id, "note_type": note_type, "source": "docx"},
+                )
+            )
+            emitted.add(key)
+
+
 def parse_docx(path: Path) -> NormalizedDocument:
     document = Document(path)
     title = (document.core_properties.title or "").strip() or path.stem
+    footnotes = _read_note_bodies(path, "footnote")
+    endnotes = _read_note_bodies(path, "endnote")
 
     chapters: list[NormalizedChapter] = []
     assets: list[NormalizedAsset] = []
@@ -310,4 +385,5 @@ def parse_docx(path: Path) -> NormalizedDocument:
     elif len(chapters) == 1 and chapters[0].title is None:
         chapters[0].title = title
 
+    _append_referenced_notes(chapters, footnotes, endnotes)
     return NormalizedDocument(title=title, chapters=chapters, assets=assets)
