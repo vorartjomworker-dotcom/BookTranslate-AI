@@ -17,6 +17,7 @@ from app.models.book import Book
 from app.models.chapter import Chapter
 from app.models.segment import Segment
 from app.models.translation_job import TranslationJob
+from app.models.translation_memory import TranslationMemoryEntry
 from app.models.translation_qa_result import TranslationQAResult
 from app.models.translation_version import TranslationVersion
 from app.redis_client import redis_client
@@ -140,7 +141,7 @@ async def _run() -> None:
 
             finished = await process_job(db, gateway, job.id)
             assert finished.status == "completed"
-            assert finished.total_segments == 2  # synthetic chapter heading + source paragraph
+            assert finished.total_segments == 2
             assert finished.completed_segments == 2
             assert finished.failed_segments == 0
             assert finished.skipped_segments == 0
@@ -161,6 +162,11 @@ async def _run() -> None:
             )
             assert len(final_versions) == 2
             assert all(version.quality_score == pytest.approx(91.25) for version in final_versions)
+
+            memory_rows = list((await db.execute(select(TranslationMemoryEntry))).scalars().all())
+            assert len(memory_rows) == 2
+            assert all(memory.quality_score == pytest.approx(91.25) for memory in memory_rows)
+            assert all((memory.metadata_json or {}).get("qa_verdict") == "excellent" for memory in memory_rows)
 
             normalized = await load_normalized_document(
                 db,
