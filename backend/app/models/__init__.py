@@ -1,5 +1,6 @@
 from app.models.app_user import AppUser
 from app.models.asset import Asset
+from app.models.audit_event import AuditEvent
 from app.models.base import Base
 from app.models.block import Block
 from app.models.book import Book
@@ -22,10 +23,13 @@ from app.models.translation_job import TranslationJob
 from app.models.translation_memory import TranslationMemoryEntry
 from app.models.translation_qa_result import TranslationQAResult
 from app.models.translation_version import TranslationVersion
+from app.models.vision_extraction import VisionExtraction
+from app.models.vision_job import VisionJob
 
 __all__ = [
     "Base",
     "AppUser",
+    "AuditEvent",
     "Book",
     "Chapter",
     "Section",
@@ -48,4 +52,6 @@ __all__ = [
     "BookQAReport",
     "TerminologyIssue",
     "ProviderModelPolicy",
+    "VisionExtraction",
+    "VisionJob",
 ]

@@ -106,7 +106,11 @@ def _evaluators(config: dict) -> list[QAEvaluator]:
 
 
 async def _segments_for_job(db: AsyncSession, job: TranslationJob) -> list[Segment]:
-    query = select(Segment).join(Chapter, Segment.chapter_id == Chapter.id).where(Chapter.book_id == job.book_id)
+    query = (
+        select(Segment)
+        .join(Chapter, Segment.chapter_id == Chapter.id)
+        .where(Chapter.book_id == job.book_id, Segment.status != "superseded")
+    )
     if job.chapter_id is not None:
         query = query.where(Chapter.id == job.chapter_id)
     return list((await db.execute(query.order_by(Chapter.position, Segment.position))).scalars().all())

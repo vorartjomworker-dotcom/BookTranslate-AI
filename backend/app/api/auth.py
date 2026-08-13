@@ -1,7 +1,9 @@
 import secrets
+import urllib.parse
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +12,7 @@ from app.core.auth import DevActor, ROLES, get_current_actor, hash_api_token, ne
 from app.core.config import settings
 from app.db import get_db
 from app.models.app_user import AppUser
+from app.services.oidc import build_authorization_url, complete_oidc_login
 
 router = APIRouter(tags=["auth"])
 
@@ -37,6 +40,17 @@ def _normalize_email(value: str) -> str:
     return email
 
 
+def _safe_return_to(value: str | None) -> str:
+    configured = settings.oidc_frontend_redirect_uri
+    if not value:
+        return configured
+    target = urllib.parse.urlparse(value)
+    allowed = urllib.parse.urlparse(configured)
+    if target.scheme != allowed.scheme or target.netloc != allowed.netloc:
+        return configured
+    return value
+
+
 def _user_out(user: AppUser, *, api_token: str | None = None) -> dict:
     data = {
         "id": str(user.id),
@@ -44,6 +58,8 @@ def _user_out(user: AppUser, *, api_token: str | None = None) -> dict:
         "display_name": user.display_name,
         "role": user.role,
         "is_active": user.is_active,
+        "oidc_issuer": user.oidc_issuer,
+        "oidc_subject": user.oidc_subject,
         "last_seen_at": user.last_seen_at,
         "created_at": user.created_at,
     }
@@ -76,6 +92,45 @@ async def bootstrap_admin(
     await db.commit()
     await db.refresh(user)
     return _user_out(user, api_token=token)
+
+
+@router.get("/api/auth/oidc/config")
+async def oidc_config() -> dict:
+    return {
+        "enabled": settings.oidc_enabled,
+        "issuer": settings.oidc_issuer if settings.oidc_enabled else None,
+        "login_path": "/api/auth/oidc/login" if settings.oidc_enabled else None,
+    }
+
+
+@router.get("/api/auth/oidc/login")
+async def oidc_login(return_to: str | None = Query(default=None)) -> RedirectResponse:
+    if not settings.oidc_enabled:
+        raise HTTPException(status_code=404, detail="OIDC is not enabled")
+    try:
+        url = await build_authorization_url(return_to=_safe_return_to(return_to))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"OIDC discovery failed: {exc}") from exc
+    return RedirectResponse(url, status_code=302)
+
+
+@router.get("/api/auth/oidc/callback")
+async def oidc_callback(
+    code: str | None = Query(default=None),
+    state_value: str | None = Query(default=None, alias="state"),
+    error: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    if error:
+        raise HTTPException(status_code=401, detail=f"OIDC login failed: {error}")
+    if not code or not state_value:
+        raise HTTPException(status_code=400, detail="OIDC callback requires code and state")
+    try:
+        user, token, return_to = await complete_oidc_login(db, code=code, state=state_value)
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=f"OIDC callback validation failed: {exc}") from exc
+    fragment = urllib.parse.urlencode({"token": token, "role": user.role, "user": user.display_name})
+    return RedirectResponse(f"{_safe_return_to(return_to)}#{fragment}", status_code=302)
 
 
 @router.get("/api/auth/me")

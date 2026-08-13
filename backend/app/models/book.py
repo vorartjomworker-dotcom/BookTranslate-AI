@@ -50,3 +50,10 @@ class Book(Base, TimestampMixin):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    vision_jobs = relationship(
+        "VisionJob",
+        back_populates="book",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="VisionJob.created_at",
+    )

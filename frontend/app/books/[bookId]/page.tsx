@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { apiFetch, apiUrl } from "../../lib/api";
+import { apiFetch, getDownloadUrl } from "../../lib/api";
 
 type Segment = {
   id: string;
@@ -21,36 +21,9 @@ type Segment = {
 };
 
 type Chapter = { id: string; position: number; title: string | null; segments: Segment[] };
-
-type QA = {
-  overall_score: number;
-  translation_coverage: number;
-  average_segment_quality: number;
-  terminology_consistency: number;
-  human_review_coverage: number;
-  low_quality_segments: number;
-  unresolved_reviews: number;
-  terminology_issues: number;
-  estimated_cost_usd: string;
-};
-
-type Workbench = {
-  book: { id: string; title: string; source_language: string; target_language: string; status: string; file_format: string | null };
-  chapters: Chapter[];
-  qa: QA | null;
-  open_terminology_issues: number;
-};
-
-type TerminologyIssue = {
-  id: string;
-  segment_id: string | null;
-  source_term: string;
-  expected_target_term: string;
-  translated_text: string | null;
-  issue_type: string;
-  severity: string;
-  status: string;
-};
+type QA = { overall_score: number; translation_coverage: number; average_segment_quality: number; terminology_consistency: number; human_review_coverage: number; low_quality_segments: number; unresolved_reviews: number; terminology_issues: number; estimated_cost_usd: string };
+type Workbench = { book: { id: string; title: string; source_language: string; target_language: string; status: string; file_format: string | null }; chapters: Chapter[]; qa: QA | null; open_terminology_issues: number };
+type TerminologyIssue = { id: string; segment_id: string | null; source_term: string; expected_target_term: string; translated_text: string | null; issue_type: string; severity: string; status: string };
 
 function scoreClass(score: number | null) {
   if (score === null) return "neutral";
@@ -61,13 +34,7 @@ function scoreClass(score: number | null) {
 }
 
 function Metric({ label, value, detail }: { label: string; value: string; detail?: string }) {
-  return (
-    <div className="qa-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {detail ? <small>{detail}</small> : null}
-    </div>
-  );
+  return <div className="qa-card"><span>{label}</span><strong>{value}</strong>{detail ? <small>{detail}</small> : null}</div>;
 }
 
 export default function BookWorkspace() {
@@ -88,7 +55,7 @@ export default function BookWorkspace() {
       apiFetch(`/api/books/${bookId}/terminology-issues`, { cache: "no-store" }),
     ]);
     if (!workspaceResponse.ok) {
-      if (workspaceResponse.status === 401) throw new Error("Authentication required. Add your API token in Reviewer Inbox.");
+      if (workspaceResponse.status === 401) throw new Error("Authentication required. Sign in from the Library page.");
       throw new Error(`Workbench returned ${workspaceResponse.status}`);
     }
     const workspace: Workbench = await workspaceResponse.json();
@@ -103,159 +70,120 @@ export default function BookWorkspace() {
     }
   }
 
-  useEffect(() => {
-    void load().catch((error) => setMessage(error instanceof Error ? error.message : "Could not load workspace"));
-  }, [bookId]);
+  useEffect(() => { void load().catch((error) => setMessage(error instanceof Error ? error.message : "Could not load workspace")); }, [bookId]);
 
   const activeChapter = useMemo(() => data?.chapters.find((item) => item.id === chapterId) ?? data?.chapters[0] ?? null, [data, chapterId]);
   const visibleSegments = useMemo(() => {
     const rows = activeChapter?.segments ?? [];
     if (filter === "review") return rows.filter((item) => item.pending_review_id || item.status === "needs_review");
     if (filter === "low") return rows.filter((item) => item.quality_score !== null && item.quality_score < 80);
-    return rows;
+    return rows.filter((item) => item.status !== "superseded");
   }, [activeChapter, filter]);
   const selected = useMemo(() => activeChapter?.segments.find((item) => item.id === segmentId) ?? visibleSegments[0] ?? null, [activeChapter, segmentId, visibleSegments]);
 
-  useEffect(() => {
-    setDraft(selected?.translated_text ?? "");
-  }, [selected?.id, selected?.translated_text]);
+  useEffect(() => { setDraft(selected?.translated_text ?? ""); }, [selected?.id, selected?.translated_text]);
 
   async function saveEdit() {
-    if (!selected?.translation_id || !draft.trim()) {
-      setMessage("This segment needs a generated final translation before manual editing.");
-      return;
-    }
-    setBusy(true);
-    setMessage(null);
+    if (!selected?.translation_id || !draft.trim()) { setMessage("This segment needs a generated final translation before manual editing."); return; }
+    setBusy(true); setMessage(null);
     try {
       const response = await apiFetch(`/api/translations/${selected.translation_id}/editor-version`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: draft, notes: "Edited in translator workbench" }),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: draft, notes: "Edited in translator workbench" }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail ?? `Save failed with ${response.status}`);
       setMessage("Human-reviewed version saved and finalized.");
       await load();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not save edit");
-    } finally {
-      setBusy(false);
-    }
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not save edit"); }
+    finally { setBusy(false); }
   }
 
   async function rebuildQA() {
     if (!data) return;
-    setBusy(true);
-    setMessage(null);
+    setBusy(true); setMessage(null);
     try {
-      const response = await apiFetch(`/api/books/${bookId}/qa-report`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_language: data.book.target_language, low_quality_threshold: 80 }),
-      });
+      const response = await apiFetch(`/api/books/${bookId}/qa-report`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target_language: data.book.target_language, low_quality_threshold: 80 }) });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail ?? `QA failed with ${response.status}`);
-      setMessage("Book QA report rebuilt.");
-      await load();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not rebuild QA");
-    } finally {
-      setBusy(false);
-    }
+      setMessage("Book QA report rebuilt."); await load();
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not rebuild QA"); }
+    finally { setBusy(false); }
+  }
+
+  async function runVision() {
+    setBusy(true); setMessage(null);
+    try {
+      const response = await apiFetch(`/api/books/${bookId}/vision-jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail ?? `Vision job failed with ${response.status}`);
+      setMessage(`Figure OCR queued as job ${payload.id}. Refresh after the vision worker completes.`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not queue figure OCR"); }
+    finally { setBusy(false); }
+  }
+
+  async function download(format: "translated.docx" | "translated.epub") {
+    setBusy(true); setMessage(null);
+    try { window.location.href = await getDownloadUrl(bookId, format); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "Could not prepare download"); }
+    finally { setBusy(false); }
   }
 
   async function setIssueStatus(issueId: string, status: "resolved" | "ignored") {
-    const response = await apiFetch(`/api/terminology-issues/${issueId}/status`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
+    const response = await apiFetch(`/api/terminology-issues/${issueId}/status`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
     if (response.ok) await load();
   }
 
-  if (!data) {
-    return <main className="shell"><div className="panel loading-panel">{message ?? "Loading translation workspace…"}</div></main>;
-  }
+  if (!data) return <main className="shell"><div className="panel loading-panel">{message ?? "Loading translation workspace…"}</div></main>;
 
   const qa = data.qa;
-  const translated = data.chapters.flatMap((item) => item.segments).filter((item) => item.translated_text).length;
-  const total = data.chapters.reduce((sum, item) => sum + item.segments.length, 0);
+  const allSegments = data.chapters.flatMap((item) => item.segments).filter((item) => item.status !== "superseded");
+  const translated = allSegments.filter((item) => item.translated_text).length;
+  const figureText = allSegments.filter((item) => item.type === "figure_text").length;
+  const total = allSegments.length;
 
   return (
     <main className="workspace-shell">
       <header className="workspace-header">
         <div className="workspace-title-row">
           <Link href="/" className="back-link">← Library</Link>
-          <div>
-            <p className="eyebrow">{data.book.source_language.toUpperCase()} → {data.book.target_language.toUpperCase()} · {data.book.file_format?.toUpperCase() ?? "BOOK"}</p>
-            <h1>{data.book.title}</h1>
-          </div>
+          <div><p className="eyebrow">{data.book.source_language.toUpperCase()} → {data.book.target_language.toUpperCase()} · {data.book.file_format?.toUpperCase() ?? "BOOK"}</p><h1>{data.book.title}</h1></div>
         </div>
         <div className="workspace-actions">
           <Link className="button ghost" href="/reviews">Reviewer inbox</Link>
+          <button className="button ghost" onClick={() => void runVision()} disabled={busy}>Run figure OCR</button>
           <button className="button ghost" onClick={() => void rebuildQA()} disabled={busy}>Rebuild QA</button>
-          <a className="button ghost" href={`${apiUrl}/api/books/${bookId}/export/translated.docx`}>DOCX</a>
-          <a className="button primary" href={`${apiUrl}/api/books/${bookId}/export/translated.epub`}>EPUB</a>
+          <button className="button ghost" onClick={() => void download("translated.docx")} disabled={busy}>DOCX</button>
+          <button className="button primary" onClick={() => void download("translated.epub")} disabled={busy}>EPUB</button>
         </div>
       </header>
 
       <section className="qa-dashboard">
         <Metric label="Book quality" value={qa ? `${qa.overall_score.toFixed(1)}%` : "—"} detail={qa ? "weighted score" : "build QA report"} />
         <Metric label="Translation" value={qa ? `${qa.translation_coverage.toFixed(0)}%` : `${translated}/${total}`} detail="coverage" />
-        <Metric label="Segment QA" value={qa ? `${qa.average_segment_quality.toFixed(1)}%` : "—"} detail={`${qa?.low_quality_segments ?? 0} below 80`} />
+        <Metric label="Figure OCR" value={`${figureText}`} detail="figure text segments" />
         <Metric label="Terminology" value={qa ? `${qa.terminology_consistency.toFixed(1)}%` : "—"} detail={`${data.open_terminology_issues} open issues`} />
         <Metric label="Human review" value={qa ? `${qa.human_review_coverage.toFixed(0)}%` : "—"} detail={`${qa?.unresolved_reviews ?? 0} pending`} />
-        <Metric label="AI cost" value={qa ? `$${Number(qa.estimated_cost_usd).toFixed(4)}` : "—"} detail="estimated" />
+        <Metric label="AI cost" value={qa ? `$${Number(qa.estimated_cost_usd).toFixed(4)}` : "—"} detail="translation estimate" />
       </section>
 
       {message ? <div className="workspace-message">{message}</div> : null}
 
       <section className="workspace-grid">
         <aside className="chapter-sidebar panel-flat">
-          <div className="sidebar-heading">
-            <p className="eyebrow">Structure</p>
-            <strong>{data.chapters.length} chapters</strong>
-          </div>
-          <div className="chapter-list">
-            {data.chapters.map((chapter) => (
-              <button
-                key={chapter.id}
-                className={`chapter-button ${activeChapter?.id === chapter.id ? "active" : ""}`}
-                onClick={() => {
-                  setChapterId(chapter.id);
-                  setSegmentId(chapter.segments[0]?.id ?? null);
-                }}
-              >
-                <span>{chapter.position + 1}</span>
-                <div><strong>{chapter.title ?? `Chapter ${chapter.position + 1}`}</strong><small>{chapter.segments.length} segments</small></div>
-              </button>
-            ))}
-          </div>
+          <div className="sidebar-heading"><p className="eyebrow">Structure</p><strong>{data.chapters.length} chapters</strong></div>
+          <div className="chapter-list">{data.chapters.map((chapter) => (
+            <button key={chapter.id} className={`chapter-button ${activeChapter?.id === chapter.id ? "active" : ""}`} onClick={() => { setChapterId(chapter.id); setSegmentId(chapter.segments[0]?.id ?? null); }}>
+              <span>{chapter.position + 1}</span><div><strong>{chapter.title ?? `Chapter ${chapter.position + 1}`}</strong><small>{chapter.segments.length} segments</small></div>
+            </button>
+          ))}</div>
         </aside>
 
         <section className="segment-panel panel-flat">
-          <div className="segment-toolbar">
-            <div>
-              <p className="eyebrow">Segments</p>
-              <strong>{activeChapter?.title ?? "Chapter"}</strong>
-            </div>
-            <div className="segmented-control">
-              {(["all", "review", "low"] as const).map((value) => (
-                <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{value}</button>
-              ))}
-            </div>
-          </div>
+          <div className="segment-toolbar"><div><p className="eyebrow">Segments</p><strong>{activeChapter?.title ?? "Chapter"}</strong></div><div className="segmented-control">{(["all", "review", "low"] as const).map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{value}</button>)}</div></div>
           <div className="segment-list">
             {visibleSegments.map((segment) => (
               <button key={segment.id} className={`segment-row ${selected?.id === segment.id ? "active" : ""}`} onClick={() => setSegmentId(segment.id)}>
-                <span className="segment-position">{segment.position + 1}</span>
-                <div className="segment-preview">
-                  <strong>{segment.type}</strong>
-                  <span>{segment.source_text}</span>
-                </div>
-                <span className={`score-badge ${scoreClass(segment.quality_score)}`}>{segment.quality_score === null ? "—" : Math.round(segment.quality_score)}</span>
-                {segment.pending_review_id ? <span className="review-dot" title="Pending human review" /> : null}
+                <span className="segment-position">{segment.position + 1}</span><div className="segment-preview"><strong>{segment.type}</strong><span>{segment.source_text}</span></div><span className={`score-badge ${scoreClass(segment.quality_score)}`}>{segment.quality_score === null ? "—" : Math.round(segment.quality_score)}</span>{segment.pending_review_id ? <span className="review-dot" title="Pending human review" /> : null}
               </button>
             ))}
             {visibleSegments.length === 0 ? <div className="empty-list">No segments match this filter.</div> : null}
@@ -263,53 +191,18 @@ export default function BookWorkspace() {
         </section>
 
         <section className="editor-panel panel-flat">
-          {selected ? (
-            <>
-              <div className="editor-heading">
-                <div>
-                  <p className="eyebrow">Editor · segment {selected.position + 1}</p>
-                  <div className="editor-statuses">
-                    <span className={`status-pill ${selected.status === "translated" ? "success" : "neutral"}`}>{selected.status}</span>
-                    <span className={`status-pill ${scoreClass(selected.quality_score)}`}>QA {selected.quality_score === null ? "—" : selected.quality_score.toFixed(1)}</span>
-                  </div>
-                </div>
-                <button className="button primary" onClick={() => void saveEdit()} disabled={busy || !selected.translation_id || !draft.trim()}>{busy ? "Saving…" : "Save human version"}</button>
-              </div>
-              <div className="dual-editor">
-                <label className="editor-column">
-                  <span>Source · {data.book.source_language.toUpperCase()}</span>
-                  <textarea readOnly value={selected.source_text} />
-                </label>
-                <label className="editor-column">
-                  <span>Translation · {data.book.target_language.toUpperCase()}</span>
-                  <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="No final translation yet" />
-                </label>
-              </div>
-              <div className="fidelity-bar">
-                <span>Fidelity metadata</span>
-                <code>{Object.keys(selected.metadata ?? {}).filter((key) => ["hyperlinks", "mathml", "omml", "footnote_refs", "footnote_references", "endnote_references", "note_id", "note_type"].includes(key)).join(" · ") || "none"}</code>
-              </div>
-            </>
-          ) : <div className="empty-state">Select a segment to open the editor.</div>}
+          {selected ? <>
+            <div className="editor-heading"><div><p className="eyebrow">Editor · segment {selected.position + 1}</p><div className="editor-statuses"><span className={`status-pill ${selected.status === "translated" ? "success" : "neutral"}`}>{selected.status}</span><span className={`status-pill ${scoreClass(selected.quality_score)}`}>QA {selected.quality_score === null ? "—" : selected.quality_score.toFixed(1)}</span></div></div><button className="button primary" onClick={() => void saveEdit()} disabled={busy || !selected.translation_id || !draft.trim()}>{busy ? "Saving…" : "Save human version"}</button></div>
+            <div className="dual-editor"><label className="editor-column"><span>Source · {data.book.source_language.toUpperCase()}</span><textarea readOnly value={selected.source_text} /></label><label className="editor-column"><span>Translation · {data.book.target_language.toUpperCase()}</span><textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="No final translation yet" /></label></div>
+            <div className="fidelity-bar"><span>Fidelity metadata</span><code>{Object.keys(selected.metadata ?? {}).filter((key) => ["hyperlinks", "mathml", "omml", "footnote_refs", "footnote_references", "endnote_references", "note_id", "note_type", "asset_id", "vision_extraction_id", "bbox", "kind"].includes(key)).join(" · ") || "none"}</code></div>
+          </> : <div className="empty-state">Select a segment to open the editor.</div>}
         </section>
       </section>
 
       <section className="issues-panel panel-flat">
-        <div className="section-heading compact">
-          <div><p className="eyebrow">Terminology audit</p><h2>Open consistency issues</h2></div>
-          <span className="status-pill warning">{issues.filter((item) => item.status === "open").length} open</span>
-        </div>
+        <div className="section-heading compact"><div><p className="eyebrow">Terminology audit</p><h2>Open consistency issues</h2></div><span className="status-pill warning">{issues.filter((item) => item.status === "open").length} open</span></div>
         <div className="issue-table">
-          {issues.filter((item) => item.status === "open").slice(0, 20).map((issue) => (
-            <div className="issue-row" key={issue.id}>
-              <div><strong>{issue.source_term}</strong><span>Expected: {issue.expected_target_term}</span></div>
-              <p>{issue.translated_text ?? "No translation"}</p>
-              <div className="issue-actions">
-                <button onClick={() => void setIssueStatus(issue.id, "resolved")}>Resolve</button>
-                <button onClick={() => void setIssueStatus(issue.id, "ignored")}>Ignore</button>
-              </div>
-            </div>
-          ))}
+          {issues.filter((item) => item.status === "open").slice(0, 20).map((issue) => <div className="issue-row" key={issue.id}><div><strong>{issue.source_term}</strong><span>Expected: {issue.expected_target_term}</span></div><p>{issue.translated_text ?? "No translation"}</p><div className="issue-actions"><button onClick={() => void setIssueStatus(issue.id, "resolved")}>Resolve</button><button onClick={() => void setIssueStatus(issue.id, "ignored")}>Ignore</button></div></div>)}
           {issues.filter((item) => item.status === "open").length === 0 ? <div className="empty-list">No open terminology issues.</div> : null}
         </div>
       </section>

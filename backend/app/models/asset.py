@@ -30,3 +30,10 @@ class Asset(Base, TimestampMixin):
 
     book = relationship("Book", back_populates="assets")
     figures = relationship("Figure", back_populates="asset", passive_deletes=True)
+    vision_extractions = relationship(
+        "VisionExtraction",
+        back_populates="asset",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="VisionExtraction.created_at",
+    )
