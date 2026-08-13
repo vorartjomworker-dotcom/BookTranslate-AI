@@ -1,6 +1,6 @@
 # BookTranslate AI
 
-AI-powered platform for structured technical-book translation with persistent document reconstruction, translation memory and provider-neutral AI orchestration.
+AI-powered platform for structured technical-book translation with persistent document reconstruction, translation memory, provider-neutral AI orchestration and multi-model QA.
 
 ## Current status
 
@@ -9,7 +9,7 @@ AI-powered platform for structured technical-book translation with persistent do
 - Next.js + TypeScript frontend
 - FastAPI backend
 - PostgreSQL
-- Redis foundation
+- Redis
 - Docker Compose
 - readiness/liveness checks
 - GitHub Actions CI
@@ -43,75 +43,109 @@ Implemented:
 - `GET /api/books/{book_id}/export/docx`
 - parser/reconstruction and PostgreSQL round-trip tests
 
-### Stage 3 — Translation Engine V1
-
-Translation model:
+### Stage 3 — Translation Engine V1 ✅
 
 ```text
 Segment
 └── Translation (per target language)
-    ├── TranslationVersion 1 — translator
-    ├── TranslationVersion 2 — reviewer
-    ├── TranslationVersion 3 — critic/finalizer
+    ├── TranslationVersion — translator
+    ├── TranslationVersion — reviewer
+    ├── TranslationVersion — critic/finalizer
     └── selected final version
 
 ModelRun -> provider/model/prompt/tokens/latency/output/error
-PromptVersion -> versioned system prompt + template
+PromptVersion -> versioned prompt
 Book -> GlossaryTerm
 Book -> TranslationMemoryEntry
 ```
 
-Implemented on the translation-engine branch:
+Implemented:
 
-- persistent `Translation` and immutable-style `TranslationVersion` history
-- `ModelRun` audit trail for model/provider calls
-- versioned `PromptVersion`
-- per-book glossary/terminology
-- exact-hash Translation Memory with approved final translations
-- Context Builder with neighbouring source segments, glossary and Translation Memory
-- provider-neutral `ModelGateway`
-- OpenAI adapter using the Responses API
-- Kimi adapter using OpenAI-compatible chat completions
-- Gemini adapter using the Interactions API
-- AITUNNEL adapter using OpenAI-compatible chat completions
+- persistent Translation/TranslationVersion history
+- ModelRun audit trail
+- versioned prompts
+- per-book glossary
+- exact-hash Translation Memory
+- Context Builder with neighbouring source segments, glossary and memory
+- provider-neutral Model Gateway
+- OpenAI, Kimi, Gemini and AITUNNEL adapters
 - configurable translator/reviewer/critic/finalizer pipeline
-- finalization updates the compatibility `Segment.translated_text` field and writes the approved result into Translation Memory
-- provider HTTP tests with mocked transports: no real API keys are required in CI
-- PostgreSQL integration test for translation versioning, model runs, finalization and Translation Memory
+- provider tests with mocked HTTP transports
+- PostgreSQL integration coverage
 
-## Project structure
+### Stage 4 — Translation Jobs, Workers & Multi-model QA ✅
 
 ```text
-BookTranslate-AI/
-├── backend/
-│   ├── alembic/versions/
-│   ├── app/
-│   │   ├── ai/
-│   │   │   ├── gateway.py
-│   │   │   ├── schemas.py
-│   │   │   └── providers/
-│   │   │       ├── openai.py
-│   │   │       ├── kimi.py
-│   │   │       ├── gemini.py
-│   │   │       └── aitunnel.py
-│   │   ├── api/
-│   │   │   ├── books.py
-│   │   │   ├── upload.py
-│   │   │   ├── export.py
-│   │   │   ├── glossary.py
-│   │   │   ├── translations.py
-│   │   │   └── ai.py
-│   │   ├── models/
-│   │   └── services/
-│   │       ├── context_builder.py
-│   │       ├── prompt_builder.py
-│   │       ├── translation_engine.py
-│   │       └── translation_memory.py
-│   └── tests/
-├── frontend/
-├── .github/workflows/ci.yml
-├── .env.example
-└── docker-compose.yml
+Book / Chapter
+      ↓
+TranslationJob (PostgreSQL source of truth)
+      ↓
+Redis queue signal
+      ↓
+translation-worker
+      ↓
+segments + structural heading segments
+      ↓
+Translator → Reviewer → Critic → Finalizer
+      ↓
+final TranslationVersion
+      ↓
+QA evaluator A ─┐
+QA evaluator B ─┼─> weighted score 0..100
+QA evaluator C ─┘
+      ↓
+Translation Memory quality score
+      ↓
+Translated DOCX reconstruction
+```
+
+Implemented:
+
+- durable `TranslationJob` persistence with book/chapter scope
+- Redis FIFO queue with queued-ID deduplication
+- independent Docker `worker` service
+- queued/stale-running job recovery
+- idempotency keys
+- retry policy and optional stop-on-error
+- cancellation flag
+- progress counters and current segment tracking
+- batch translation for a chapter or whole book
+- synthetic chapter/section heading segments so headings participate in the same audited translation pipeline
+- `TranslationQAResult` persistence
+- multi-model QA evaluators
+- explicit six-dimension scoring
+- weighted aggregate quality score from 0 to 100
+- QA issues/verdict persistence
+- QA score propagation to final TranslationVersion and Translation Memory
+- translated DOCX export
+- translated paragraph/list/code/caption/heading reconstruction
+- translated table reconstruction when the model preserves the source row/tab grid
+- source fallback when a block has no approved translation or table grid cannot be safely reconstructed
+- PostgreSQL + Redis end-to-end CI integration test
+
+## QA score
+
+Each evaluator returns six scores from 0 to 100. BookTranslate AI computes the evaluator score deterministically:
+
+```text
+Semantic accuracy       30%
+Terminology             20%
+Completeness            15%
+Fluency                 15%
+Technical integrity     10%
+Style                   10%
+```
+
+Multiple evaluator-model scores are then combined using their configured evaluator weights. The aggregate score is stored on the final `TranslationVersion` and propagated to its Translation Memory entry.
+
+Verdicts:
+
+```text
+90–100  excellent
+80–89   good
+70–79   acceptable
+60–69   needs_review
+<60     poor
 ```
 
 ## Run
@@ -128,7 +162,7 @@ Windows PowerShell:
 Copy-Item .env.example .env
 ```
 
-Add only the provider keys you intend to use. Empty providers remain disabled:
+Add only provider keys you intend to use:
 
 ```env
 OPENAI_API_KEY=
@@ -137,15 +171,15 @@ GEMINI_API_KEY=
 AITUNNEL_API_KEY=
 ```
 
-Never commit real API keys. Docker Compose forwards the configured variables into the backend container.
+Never commit real API keys.
 
-Start the stack:
+Start all services:
 
 ```bash
 docker compose up --build
 ```
 
-Docker Compose applies `alembic upgrade head` before starting FastAPI.
+Services include frontend, FastAPI backend, PostgreSQL, Redis and the translation worker. The backend applies `alembic upgrade head` before becoming healthy; the worker starts only after backend readiness.
 
 Useful endpoints:
 
@@ -162,12 +196,10 @@ GET  /api/books
 GET  /api/books/{book_id}
 POST /api/books/upload
 GET  /api/books/{book_id}/export/docx
+GET  /api/books/{book_id}/export/translated.docx
 ```
 
-Supported source formats:
-
-- `.docx`
-- `.epub`
+Supported source formats: `.docx`, `.epub`.
 
 ## Glossary API
 
@@ -176,9 +208,7 @@ POST /api/books/{book_id}/glossary
 GET  /api/books/{book_id}/glossary
 ```
 
-Glossary matches are automatically injected into translation context for the current segment.
-
-## Translation API
+## Segment Translation API
 
 ```text
 POST /api/segments/{segment_id}/translations
@@ -190,49 +220,47 @@ POST /api/translations/{translation_id}/versions/{version_id}/finalize
 GET  /api/ai/providers
 ```
 
-`GET /api/ai/providers` exposes provider names only; it never returns API keys.
+## Translation Jobs API
 
-Example conceptual pipeline request:
+```text
+POST /api/books/{book_id}/translation-jobs
+POST /api/chapters/{chapter_id}/translation-jobs
+GET  /api/translation-jobs/{job_id}
+GET  /api/books/{book_id}/translation-jobs
+POST /api/translation-jobs/{job_id}/cancel
+```
+
+Conceptual whole-book job:
 
 ```json
 {
   "target_language": "ru",
   "stages": [
-    {"provider": "kimi", "model": "<configured-kimi-model>", "role": "translator"},
-    {"provider": "openai", "model": "<configured-openai-model>", "role": "reviewer"},
-    {"provider": "gemini", "model": "<configured-gemini-model>", "role": "critic"},
-    {"provider": "openai", "model": "<configured-openai-model>", "role": "finalizer"}
+    {"provider": "kimi", "model": "<kimi-model>", "role": "translator"},
+    {"provider": "openai", "model": "<openai-model>", "role": "reviewer"},
+    {"provider": "gemini", "model": "<gemini-model>", "role": "critic"},
+    {"provider": "openai", "model": "<openai-model>", "role": "finalizer"}
   ],
-  "finalize_last": true
+  "qa_evaluators": [
+    {"provider": "openai", "model": "<qa-model>", "weight": 1.0},
+    {"provider": "gemini", "model": "<qa-model>", "weight": 1.0}
+  ],
+  "max_retries": 2,
+  "min_quality_score": 80,
+  "idempotency_key": "book-42-ru-v1"
 }
 ```
 
-Model names are intentionally configuration/request data rather than hard-coded project constants.
+Provider/model names remain request/configuration data rather than hard-coded project constants.
 
-## Translation lifecycle
+## QA API
 
 ```text
-Source Segment
-    ↓
-Context Builder
-    ├── neighbouring segments
-    ├── Glossary
-    └── Translation Memory
-    ↓
-Model Gateway
-    ↓
-Translator
-    ↓
-Reviewer
-    ↓
-Critic / Finalizer
-    ↓
-TranslationVersion history
-    ↓
-Approved final version
-    ├── Segment.translated_text compatibility field
-    └── Translation Memory
+POST /api/translations/{translation_id}/versions/{version_id}/qa
+GET  /api/translations/{translation_id}/versions/{version_id}/qa
 ```
+
+QA can therefore be rerun independently from the batch worker with another evaluator set.
 
 ## Tests and CI
 
@@ -246,29 +274,34 @@ python -m pytest -q
 GitHub Actions:
 
 - starts PostgreSQL
-- applies the complete Alembic migration chain
-- enables `RUN_DB_INTEGRATION=1`
-- runs Document Engine database round-trip tests
-- runs Translation Engine database round-trip tests
-- validates provider request/response adapters with `httpx.MockTransport`
+- starts Redis
+- applies the full Alembic migration chain through Stage 4
+- enables database integration tests
+- verifies Document Engine round trip
+- verifies Translation Engine versioning and memory
+- verifies Redis job enqueue/dedup/dequeue
+- verifies whole-job processing with a fake provider
+- verifies multi-model QA persistence/aggregation
+- verifies translated normalized reconstruction
+- validates provider adapters without live keys
 - builds the Next.js frontend
 
 No live LLM calls are made by CI.
 
 ## Current boundaries
 
-Document Reconstruction V1 is structural rather than pixel-identical. Formula, footnote/endnote, complex hyperlink and advanced table-style fidelity still need dedicated document models.
+- DOCX reconstruction is structural rather than pixel-identical.
+- Formulas, footnotes/endnotes, complex hyperlinks and advanced style fidelity still need dedicated structural models.
+- Translated tables are reconstructed only when the translated output preserves the original row/tab grid; otherwise the original table is retained rather than risking structural corruption.
+- Figures are preserved; image text/alt-text translation is not yet a dedicated OCR/vision workflow.
+- Current workers use a PostgreSQL-persisted job state plus Redis queue signal. This is appropriate for the MVP, but high-scale deployments may later add stronger leasing, provider rate-limit scheduling and distributed worker coordination.
 
-Translation Engine V1 currently executes requested model calls in the HTTP request lifecycle. Before large-book production processing, model orchestration should move to durable background jobs/workers using the existing Redis foundation, with retries, idempotency, rate limiting and job progress reporting.
+## Next engineering stage
 
-## Next stage
-
-After Translation Engine V1 is stable:
-
-1. durable translation jobs/workers;
-2. translated-document reconstruction using selected `TranslationVersion` values;
-3. QA result model and explicit multi-model quality scoring;
-4. terminology consistency checks across chapters;
-5. batch/chapter/book translation orchestration;
-6. human approval/review workflow;
-7. cost/token telemetry and provider routing policies.
+1. human review/approval workflow and manual version editing;
+2. book-level QA dashboard and chapter consistency scoring;
+3. terminology consistency checks across the whole book;
+4. cost/token budgets and provider routing policies;
+5. rate-limit aware scheduling/concurrency controls;
+6. translated EPUB export;
+7. formula/footnote/hyperlink fidelity improvements.

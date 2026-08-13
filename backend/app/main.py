@@ -6,14 +6,15 @@ from app.api.ai import router as ai_router
 from app.api.books import router as books_router
 from app.api.export import router as export_router
 from app.api.glossary import router as glossary_router
+from app.api.jobs import router as jobs_router
+from app.api.qa import router as qa_router
 from app.api.translations import router as translations_router
 from app.api.upload import router as upload_router
 from app.core.config import settings
 from app.db import check_database
 from app.redis_client import check_redis
 
-
-app = FastAPI(title=settings.app_name, version="0.4.0")
+app = FastAPI(title=settings.app_name, version="0.5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,6 +29,8 @@ app.include_router(upload_router)
 app.include_router(export_router)
 app.include_router(glossary_router)
 app.include_router(translations_router)
+app.include_router(jobs_router)
+app.include_router(qa_router)
 app.include_router(ai_router)
 
 
@@ -45,24 +48,15 @@ async def liveness() -> dict[str, str]:
 async def health():
     database_ok = False
     redis_ok = False
-
     try:
         database_ok = await check_database()
     except Exception:
         database_ok = False
-
     try:
         redis_ok = await check_redis()
     except Exception:
         redis_ok = False
-
-    payload = {
-        "status": "ok" if database_ok and redis_ok else "degraded",
-        "database": database_ok,
-        "redis": redis_ok,
-    }
-
+    payload = {"status": "ok" if database_ok and redis_ok else "degraded", "database": database_ok, "redis": redis_ok}
     if not (database_ok and redis_ok):
         return JSONResponse(status_code=503, content=payload)
-
     return payload

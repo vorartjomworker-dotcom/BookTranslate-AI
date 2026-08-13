@@ -27,6 +27,9 @@ services:
       GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
       AITUNNEL_API_KEY: ${AITUNNEL_API_KEY:-}
       AITUNNEL_BASE_URL: ${AITUNNEL_BASE_URL:-https://api.aitunnel.ru/v1}
+      TRANSLATION_QUEUE_NAME: ${TRANSLATION_QUEUE_NAME:-translation}
+      TRANSLATION_WORKER_POLL_SECONDS: ${TRANSLATION_WORKER_POLL_SECONDS:-5}
+      TRANSLATION_JOB_RECOVERY_AGE_SECONDS: ${TRANSLATION_JOB_RECOVERY_AGE_SECONDS:-900}
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports:
       - "8000:8000"
@@ -42,6 +45,34 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  worker:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      UPLOAD_DIR: ${UPLOAD_DIR:-/data/uploads}
+      AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-120}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      KIMI_API_KEY: ${KIMI_API_KEY:-}
+      KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.moonshot.ai/v1}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+      AITUNNEL_API_KEY: ${AITUNNEL_API_KEY:-}
+      AITUNNEL_BASE_URL: ${AITUNNEL_BASE_URL:-https://api.aitunnel.ru/v1}
+      TRANSLATION_QUEUE_NAME: ${TRANSLATION_QUEUE_NAME:-translation}
+      TRANSLATION_WORKER_POLL_SECONDS: ${TRANSLATION_WORKER_POLL_SECONDS:-5}
+      TRANSLATION_JOB_RECOVERY_AGE_SECONDS: ${TRANSLATION_JOB_RECOVERY_AGE_SECONDS:-900}
+    command: ["python", "-m", "app.workers.translation_worker"]
+    volumes:
+      - uploads_data:/data/uploads
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   postgres:
     image: postgres:17-alpine

@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     aitunnel_api_key: str | None = None
     aitunnel_base_url: str = "https://api.aitunnel.ru/v1"
 
+    translation_queue_name: str = "translation"
+    translation_worker_poll_seconds: int = 5
+    translation_job_recovery_age_seconds: int = 900
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

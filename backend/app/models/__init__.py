@@ -12,7 +12,9 @@ from app.models.prompt_version import PromptVersion
 from app.models.section import Section
 from app.models.segment import Segment
 from app.models.translation import Translation
+from app.models.translation_job import TranslationJob
 from app.models.translation_memory import TranslationMemoryEntry
+from app.models.translation_qa_result import TranslationQAResult
 from app.models.translation_version import TranslationVersion
 
 __all__ = [
@@ -32,4 +34,6 @@ __all__ = [
     "TranslationMemoryEntry",
     "PromptVersion",
     "ModelRun",
+    "TranslationJob",
+    "TranslationQAResult",
 ]
