@@ -43,8 +43,8 @@ async def _latest_final_version(db: AsyncSession, translation_id: uuid.UUID) -> 
 @router.get("/api/books/{book_id}/workbench")
 async def get_book_workbench(
     book_id: uuid.UUID,
-    _actor: AppUser | DevActor = Depends(require_min_role("viewer")),
     db: AsyncSession = Depends(get_db),
+    _actor: AppUser | DevActor = Depends(require_min_role("viewer")),
 ) -> dict:
     book = await db.get(Book, book_id)
     if book is None:
@@ -136,8 +136,8 @@ async def get_book_workbench(
 async def save_editor_version(
     translation_id: uuid.UUID,
     payload: EditorSaveRequest,
-    actor: AppUser | DevActor = Depends(require_min_role("translator")),
     db: AsyncSession = Depends(get_db),
+    actor: AppUser | DevActor = Depends(require_min_role("translator")),
 ) -> dict:
     translation = await db.get(Translation, translation_id)
     if translation is None:
@@ -145,14 +145,14 @@ async def save_editor_version(
     current = await _latest_final_version(db, translation_id)
     if current is None:
         raise HTTPException(status_code=409, detail="Translation has no final version to edit")
-    reviewer_id = payload.reviewer_id or actor.email
+    reviewer_id = payload.reviewer_id or getattr(actor, "email", None) or "workbench-editor"
     try:
         review = await request_human_review(
             db,
             version_id=current.id,
             reviewer_id=reviewer_id,
             notes=payload.notes,
-            metadata={"source": "workbench", "actor": actor.email},
+            metadata={"source": "workbench", "actor": reviewer_id},
         )
         review, selected = await resolve_human_review(
             db,
