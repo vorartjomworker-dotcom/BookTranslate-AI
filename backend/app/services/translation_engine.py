@@ -23,6 +23,8 @@ from app.services.provider_routing import (
     acquire_route,
     estimate_request_tokens,
     estimate_response_cost,
+    record_provider_error,
+    record_provider_feedback,
     release_route,
 )
 from app.services.translation_memory import remember_translation
@@ -188,7 +190,9 @@ async def generate_translation_version(
     started = time.perf_counter()
     try:
         response = await gateway.generate(route.provider, request)
+        await record_provider_feedback(route, response)
     except Exception as exc:
+        await record_provider_error(route, exc)
         run.status = "failed"
         run.error_text = str(exc)
         run.latency_ms = int((time.perf_counter() - started) * 1000)
