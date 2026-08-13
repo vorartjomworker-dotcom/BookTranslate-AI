@@ -18,6 +18,7 @@ class FigureRender(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False, index=True
     )
     target_language: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    render_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="overlay", index=True)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="completed", index=True)
     stored_filename: Mapped[str] = mapped_column(String(900), nullable=False)
     media_type: Mapped[str] = mapped_column(String(150), nullable=False, default="image/png")

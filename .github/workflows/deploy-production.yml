@@ -1,0 +1,127 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published release tag, for example v0.11.0
+        required: true
+        type: string
+      namespace:
+        description: Kubernetes namespace
+        required: true
+        default: booktranslate
+        type: string
+      ingress_host:
+        description: Public translator host
+        required: true
+        default: translate.example.com
+        type: string
+      existing_secret:
+        description: Existing Kubernetes Secret with BookTranslate credentials
+        required: true
+        default: booktranslate-secrets
+        type: string
+      enable_keda:
+        description: Enable KEDA Redis queue autoscaling
+        required: true
+        default: false
+        type: boolean
+      keda_redis_address:
+        description: Redis host:port for KEDA when enabled
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.release_tag }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.2.0
+      - uses: azure/setup-kubectl@v4
+      - name: Validate deployment inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          [[ "${{ inputs.namespace }}" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]
+          if [ "${{ inputs.enable_keda }}" = "true" ] && [ -z "${{ inputs.keda_redis_address }}" ]; then
+            echo "keda_redis_address is required when KEDA is enabled" >&2
+            exit 2
+          fi
+      - name: Configure Kubernetes credentials
+        shell: bash
+        env:
+          KUBE_CONFIG_B64: ${{ secrets.KUBE_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KUBE_CONFIG_B64" ]; then
+            echo "Production environment secret KUBE_CONFIG_B64 is required" >&2
+            exit 2
+          fi
+          printf '%s' "$KUBE_CONFIG_B64" | base64 --decode > "$RUNNER_TEMP/kubeconfig"
+          chmod 600 "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+          kubectl cluster-info
+      - name: Pull published Helm chart
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          helm pull "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER}/charts/booktranslate" --version "$VERSION" --destination "$RUNNER_TEMP"
+          echo "CHART_PATH=$RUNNER_TEMP/booktranslate-$VERSION.tgz" >> "$GITHUB_ENV"
+      - name: Atomic Helm deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            upgrade --install booktranslate "$CHART_PATH"
+            --namespace "${{ inputs.namespace }}"
+            --create-namespace
+            --atomic
+            --wait
+            --timeout 15m
+            --set-string "backend.image.repository=ghcr.io/${GITHUB_REPOSITORY_OWNER}/booktranslate-ai-backend"
+            --set-string "backend.image.tag=$RELEASE_TAG"
+            --set-string "frontend.image.repository=ghcr.io/${GITHUB_REPOSITORY_OWNER}/booktranslate-ai-frontend"
+            --set-string "frontend.image.tag=$RELEASE_TAG"
+            --set-string "ingress.host=${{ inputs.ingress_host }}"
+            --set-string "config.corsOrigins=https://${{ inputs.ingress_host }}"
+            --set-string "config.oidcRedirectUri=https://${{ inputs.ingress_host }}/api/auth/oidc/callback"
+            --set-string "config.oidcFrontendRedirectUri=https://${{ inputs.ingress_host }}/auth/callback"
+            --set-string "secrets.existingSecret=${{ inputs.existing_secret }}"
+            --set "keda.enabled=${{ inputs.enable_keda }}"
+          )
+          if [ "${{ inputs.enable_keda }}" = "true" ]; then
+            args+=(--set-string "keda.redisAddress=${{ inputs.keda_redis_address }}")
+          fi
+          helm "${args[@]}"
+      - name: Verify rollout
+        shell: bash
+        run: |
+          set -euo pipefail
+          namespace="${{ inputs.namespace }}"
+          kubectl -n "$namespace" rollout status deployment/booktranslate-booktranslate-backend --timeout=5m
+          kubectl -n "$namespace" rollout status deployment/booktranslate-booktranslate-frontend --timeout=5m
+          kubectl -n "$namespace" get pods,svc,ingress,hpa
+          if [ "${{ inputs.enable_keda }}" = "true" ]; then
+            kubectl -n "$namespace" get scaledobjects
+          fi

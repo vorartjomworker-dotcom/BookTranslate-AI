@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 
 from app.ai.providers.base import ModelProvider
+from app.ai.rate_limits import normalize_rate_limit_headers
 from app.ai.schemas import ModelRequest, ModelResponse
 
 
@@ -22,7 +23,7 @@ class OpenAICompatibleChatProvider(ModelProvider):
         self.timeout_seconds = timeout_seconds
         self._client = client
 
-    async def _post(self, payload: dict) -> dict:
+    async def _post(self, payload: dict) -> httpx.Response:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -34,7 +35,7 @@ class OpenAICompatibleChatProvider(ModelProvider):
                 json=payload,
             )
             response.raise_for_status()
-            return response.json()
+            return response
 
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.post(
@@ -43,7 +44,7 @@ class OpenAICompatibleChatProvider(ModelProvider):
                 json=payload,
             )
             response.raise_for_status()
-            return response.json()
+            return response
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         payload: dict = {
@@ -59,7 +60,8 @@ class OpenAICompatibleChatProvider(ModelProvider):
         if request.max_output_tokens is not None:
             payload["max_tokens"] = request.max_output_tokens
 
-        data = await self._post(payload)
+        http_response = await self._post(payload)
+        data = http_response.json()
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError(f"{self.name} returned no choices")
@@ -69,12 +71,16 @@ class OpenAICompatibleChatProvider(ModelProvider):
             raise RuntimeError(f"{self.name} returned an empty text response")
 
         usage = data.get("usage") or {}
+        rate_limit = normalize_rate_limit_headers(http_response.headers)
         return ModelResponse(
             text=text.strip(),
             provider=self.name,
             model=str(data.get("model") or request.model),
-            request_id=data.get("id"),
+            request_id=data.get("id") or rate_limit.get("request_id"),
             input_tokens=usage.get("prompt_tokens"),
             output_tokens=usage.get("completion_tokens"),
-            metadata={"finish_reason": choices[0].get("finish_reason")},
+            metadata={
+                "finish_reason": choices[0].get("finish_reason"),
+                "rate_limit": rate_limit,
+            },
         )

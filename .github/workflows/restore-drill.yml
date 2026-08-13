@@ -1,0 +1,69 @@
+name: Restore Drill
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: restore-drill
+  cancel-in-progress: false
+
+jobs:
+  restore-drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      POSTGRES_DB: booktranslate
+      POSTGRES_USER: booktranslate
+      POSTGRES_PASSWORD: booktranslate
+      DATABASE_URL: postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_BACKEND: local
+      AUTH_REQUIRED: "false"
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate drill scripts
+        run: bash -n scripts/backup.sh scripts/restore.sh scripts/restore_drill.sh
+      - name: Start recovery stack
+        run: docker compose up -d --build postgres redis backend worker vision-worker figure-render-worker
+      - name: Wait for API readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://localhost:8000/health >/dev/null; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              docker compose ps
+              docker compose logs backend
+              exit 1
+            fi
+            sleep 2
+          done
+      - name: Execute destructive restore drill
+        run: bash scripts/restore_drill.sh | tee restore-drill-output.txt
+      - name: Capture state
+        if: always()
+        run: |
+          docker compose ps > compose-ps.txt || true
+          docker compose logs --no-color backend postgres redis > restore-drill-services.log 2>&1 || true
+      - name: Upload restore drill evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-drill-evidence
+          path: |
+            restore-drill-output.txt
+            compose-ps.txt
+            restore-drill-services.log
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Tear down recovery stack
+        if: always()
+        run: docker compose down -v --remove-orphans

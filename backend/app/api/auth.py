@@ -2,7 +2,7 @@ import secrets
 import urllib.parse
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -12,7 +12,9 @@ from app.core.auth import DevActor, ROLES, get_current_actor, hash_api_token, ne
 from app.core.config import settings
 from app.db import get_db
 from app.models.app_user import AppUser
+from app.models.user_session import UserSession
 from app.services.oidc import build_authorization_url, complete_oidc_login
+from app.services.sessions import refresh_user_session, revoke_all_user_sessions, revoke_session
 
 router = APIRouter(tags=["auth"])
 
@@ -31,6 +33,10 @@ class UserCreate(BaseModel):
 class UserRoleUpdate(BaseModel):
     role: str
     is_active: bool | None = None
+
+
+class SessionRefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=20, max_length=500)
 
 
 def _normalize_email(value: str) -> str:
@@ -60,12 +66,28 @@ def _user_out(user: AppUser, *, api_token: str | None = None) -> dict:
         "is_active": user.is_active,
         "oidc_issuer": user.oidc_issuer,
         "oidc_subject": user.oidc_subject,
+        "scim_external_id": user.scim_external_id,
+        "scim_managed": user.scim_managed,
         "last_seen_at": user.last_seen_at,
         "created_at": user.created_at,
     }
     if api_token is not None:
         data["api_token"] = api_token
     return data
+
+
+def _session_out(row: UserSession) -> dict:
+    return {
+        "id": str(row.id),
+        "expires_at": row.expires_at,
+        "refresh_expires_at": row.refresh_expires_at,
+        "revoked_at": row.revoked_at,
+        "last_seen_at": row.last_seen_at,
+        "user_agent": row.user_agent,
+        "ip_address": row.ip_address,
+        "metadata": row.metadata_json,
+        "created_at": row.created_at,
+    }
 
 
 @router.post("/api/auth/bootstrap", status_code=status.HTTP_201_CREATED)
@@ -100,6 +122,8 @@ async def oidc_config() -> dict:
         "enabled": settings.oidc_enabled,
         "issuer": settings.oidc_issuer if settings.oidc_enabled else None,
         "login_path": "/api/auth/oidc/login" if settings.oidc_enabled else None,
+        "session_access_ttl_seconds": settings.session_access_ttl_seconds,
+        "session_refresh_ttl_seconds": settings.session_refresh_ttl_seconds,
     }
 
 
@@ -116,6 +140,7 @@ async def oidc_login(return_to: str | None = Query(default=None)) -> RedirectRes
 
 @router.get("/api/auth/oidc/callback")
 async def oidc_callback(
+    request: Request,
     code: str | None = Query(default=None),
     state_value: str | None = Query(default=None, alias="state"),
     error: str | None = Query(default=None),
@@ -126,11 +151,89 @@ async def oidc_callback(
     if not code or not state_value:
         raise HTTPException(status_code=400, detail="OIDC callback requires code and state")
     try:
-        user, token, return_to = await complete_oidc_login(db, code=code, state=state_value)
+        user, token, refresh_token, session, return_to = await complete_oidc_login(
+            db,
+            code=code,
+            state=state_value,
+            user_agent=request.headers.get("user-agent"),
+            ip_address=request.client.host if request.client else None,
+        )
     except Exception as exc:
         raise HTTPException(status_code=401, detail=f"OIDC callback validation failed: {exc}") from exc
-    fragment = urllib.parse.urlencode({"token": token, "role": user.role, "user": user.display_name})
+    fragment = urllib.parse.urlencode(
+        {
+            "token": token,
+            "refresh_token": refresh_token,
+            "expires_in": settings.session_access_ttl_seconds,
+            "session_id": str(session.id),
+            "role": user.role,
+            "user": user.display_name,
+        }
+    )
     return RedirectResponse(f"{_safe_return_to(return_to)}#{fragment}", status_code=302)
+
+
+@router.post("/api/auth/session/refresh")
+async def refresh_session(payload: SessionRefreshRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        session, user, access_token, refresh_token = await refresh_user_session(
+            db,
+            refresh_token=payload.refresh_token,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return {
+        "token": access_token,
+        "refresh_token": refresh_token,
+        "expires_in": settings.session_access_ttl_seconds,
+        "session": _session_out(session),
+        "user": _user_out(user),
+    }
+
+
+@router.get("/api/auth/sessions")
+async def list_sessions(
+    actor: AppUser | DevActor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    if actor.id is None:
+        return []
+    rows = list(
+        (
+            await db.execute(
+                select(UserSession)
+                .where(UserSession.user_id == actor.id)
+                .order_by(UserSession.created_at.desc())
+            )
+        ).scalars().all()
+    )
+    return [_session_out(row) for row in rows]
+
+
+@router.delete("/api/auth/sessions/{session_id}")
+async def delete_session(
+    session_id: uuid.UUID,
+    actor: AppUser | DevActor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    row = await db.get(UserSession, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if actor.role != "admin" and (actor.id is None or row.user_id != actor.id):
+        raise HTTPException(status_code=403, detail="Cannot revoke another user's session")
+    await revoke_session(db, session=row)
+    return {"status": "revoked", "session_id": str(row.id)}
+
+
+@router.post("/api/auth/sessions/revoke-all")
+async def revoke_all_sessions(
+    actor: AppUser | DevActor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if actor.id is None:
+        return {"revoked": 0}
+    count = await revoke_all_user_sessions(db, user_id=actor.id)
+    return {"revoked": count}
 
 
 @router.get("/api/auth/me")
@@ -195,6 +298,8 @@ async def update_user_role(
     user.role = payload.role
     if payload.is_active is not None:
         user.is_active = payload.is_active
+        if not payload.is_active:
+            await revoke_all_user_sessions(db, user_id=user.id)
     await db.commit()
     await db.refresh(user)
     return _user_out(user)

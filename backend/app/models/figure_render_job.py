@@ -19,6 +19,7 @@ class FigureRenderJob(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=True, index=True
     )
     target_language: Mapped[str] = mapped_column(String(20), nullable=False)
+    render_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="overlay", index=True)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="queued", index=True)
     queue_name: Mapped[str] = mapped_column(String(80), nullable=False, default="figure-render")
     total_assets: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

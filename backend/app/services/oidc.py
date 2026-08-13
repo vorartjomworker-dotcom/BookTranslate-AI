@@ -14,6 +14,8 @@ from app.core.auth import ROLES, hash_api_token, new_api_token
 from app.core.config import settings
 from app.core.security import sign_payload, verify_payload
 from app.models.app_user import AppUser
+from app.models.user_session import UserSession
+from app.services.sessions import create_user_session
 
 
 def _require_oidc() -> None:
@@ -107,7 +109,9 @@ async def complete_oidc_login(
     code: str,
     state: str,
     client: httpx.AsyncClient | None = None,
-) -> tuple[AppUser, str, str]:
+    user_agent: str | None = None,
+    ip_address: str | None = None,
+) -> tuple[AppUser, str, str, UserSession, str]:
     state_payload = verify_payload(state, purpose="oidc_state")
     owned = client is None
     http = client or httpx.AsyncClient(timeout=settings.ai_request_timeout_seconds)
@@ -151,27 +155,44 @@ async def complete_oidc_login(
             )
         )
     ).scalars().first()
-    token = new_api_token()
     if user is None:
+        # Keep a distinct long-lived API token hash for service/API use, but do not
+        # expose it during OIDC login. Browser sign-in uses expiring UserSession tokens.
+        static_token = new_api_token()
         user = AppUser(
             email=email,
             display_name=display_name,
             role=role,
-            api_token_hash=hash_api_token(token),
+            api_token_hash=hash_api_token(static_token),
             oidc_issuer=settings.oidc_issuer,
             oidc_subject=subject,
             is_active=True,
         )
         db.add(user)
+        await db.commit()
+        await db.refresh(user)
     else:
         if user.oidc_subject and (user.oidc_subject != subject or user.oidc_issuer != settings.oidc_issuer):
             raise ValueError("Existing account is bound to another OIDC identity")
         user.display_name = display_name
         user.oidc_issuer = settings.oidc_issuer
         user.oidc_subject = subject
-        user.api_token_hash = hash_api_token(token)
         if user.role == "viewer" and role != "viewer":
             user.role = role
-    await db.commit()
-    await db.refresh(user)
-    return user, token, str(state_payload.get("return_to") or settings.oidc_frontend_redirect_uri)
+        await db.commit()
+        await db.refresh(user)
+
+    session, access_token, refresh_token = await create_user_session(
+        db,
+        user=user,
+        user_agent=user_agent,
+        ip_address=ip_address,
+        metadata={"source": "oidc", "issuer": settings.oidc_issuer},
+    )
+    return (
+        user,
+        access_token,
+        refresh_token,
+        session,
+        str(state_payload.get("return_to") or settings.oidc_frontend_redirect_uri),
+    )

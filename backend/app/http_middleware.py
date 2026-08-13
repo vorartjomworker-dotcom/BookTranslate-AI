@@ -24,6 +24,7 @@ _PUBLIC_API_PATHS = {
     "/api/auth/oidc/config",
     "/api/auth/oidc/login",
     "/api/auth/oidc/callback",
+    "/api/auth/session/refresh",
 }
 
 
@@ -38,7 +39,9 @@ def _bearer_token(request: Request) -> str | None:
 def _is_signed_download_path(path: str) -> bool:
     if path.startswith("/api/books/") and "/export/" in path:
         return True
-    return path.startswith("/api/figure-renders/") and path.endswith("/download")
+    return path.startswith("/api/figure-renders/") and (
+        path.endswith("/download") or path.endswith("/vector-download")
+    )
 
 
 class SecurityObservabilityMiddleware(BaseHTTPMiddleware):
@@ -68,7 +71,7 @@ class SecurityObservabilityMiddleware(BaseHTTPMiddleware):
                         async with AsyncSessionLocal() as db:
                             actor = await authenticate_api_token(db, token)
                         if actor is None:
-                            return JSONResponse(status_code=401, content={"detail": "Invalid or inactive API token"})
+                            return JSONResponse(status_code=401, content={"detail": "Invalid, expired or inactive API token"})
                         request.state.actor = actor
 
             response = await call_next(request)
@@ -80,7 +83,16 @@ class SecurityObservabilityMiddleware(BaseHTTPMiddleware):
             REQUESTS.labels(request.method, route, str(response.status_code)).inc()
             LATENCY.labels(request.method, route).observe(time.perf_counter() - started)
 
-            if settings.audit_enabled and request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path.startswith("/api/"):
+            audited_namespace = (
+                "api" if request.url.path.startswith("/api/")
+                else "scim" if request.url.path.startswith("/scim/")
+                else None
+            )
+            if (
+                settings.audit_enabled
+                and audited_namespace is not None
+                and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+            ):
                 try:
                     current_actor = getattr(request.state, "actor", actor)
                     async with AsyncSessionLocal() as db:
@@ -89,7 +101,7 @@ class SecurityObservabilityMiddleware(BaseHTTPMiddleware):
                                 actor_user_id=getattr(current_actor, "id", None),
                                 actor_email=getattr(current_actor, "email", None),
                                 action=f"{request.method} {route}",
-                                resource_type="api",
+                                resource_type=audited_namespace,
                                 resource_id=request.url.path,
                                 request_id=request_id,
                                 metadata_json={"status_code": response.status_code, "trace_id": trace_id},

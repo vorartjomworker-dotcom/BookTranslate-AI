@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db import get_db
 from app.models.app_user import AppUser
+from app.models.user_session import UserSession
 
 ROLES = {"admin", "reviewer", "translator", "viewer"}
 ROLE_LEVEL = {"viewer": 0, "translator": 1, "reviewer": 2, "admin": 3}
@@ -40,14 +41,34 @@ def new_api_token() -> str:
 
 async def authenticate_api_token(db: AsyncSession, token: str) -> AppUser | None:
     token_hash = hash_api_token(token)
+    now = datetime.now(timezone.utc)
     actor = (
         await db.execute(
             select(AppUser).where(AppUser.api_token_hash == token_hash, AppUser.is_active.is_(True))
         )
     ).scalar_one_or_none()
     if actor is not None:
-        actor.last_seen_at = datetime.now(timezone.utc)
+        actor.last_seen_at = now
         await db.commit()
+        return actor
+
+    session = (
+        await db.execute(
+            select(UserSession).where(
+                UserSession.access_token_hash == token_hash,
+                UserSession.revoked_at.is_(None),
+                UserSession.expires_at > now,
+            )
+        )
+    ).scalar_one_or_none()
+    if session is None:
+        return None
+    actor = await db.get(AppUser, session.user_id)
+    if actor is None or not actor.is_active:
+        return None
+    session.last_seen_at = now
+    actor.last_seen_at = now
+    await db.commit()
     return actor
 
 
@@ -67,7 +88,7 @@ async def get_current_actor(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
     actor = await authenticate_api_token(db, credentials.credentials)
     if actor is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or inactive API token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid, expired or inactive API token")
     return actor
 
 

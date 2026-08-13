@@ -25,12 +25,14 @@ from app.models.translation_job import TranslationJob
 from app.models.translation_memory import TranslationMemoryEntry
 from app.models.translation_qa_result import TranslationQAResult
 from app.models.translation_version import TranslationVersion
+from app.models.user_session import UserSession
 from app.models.vision_extraction import VisionExtraction
 from app.models.vision_job import VisionJob
 
 __all__ = [
     "Base",
     "AppUser",
+    "UserSession",
     "AuditEvent",
     "Book",
     "Chapter",
