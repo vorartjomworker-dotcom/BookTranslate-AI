@@ -2,7 +2,7 @@ import secrets
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,12 +15,12 @@ router = APIRouter(tags=["auth"])
 
 
 class BootstrapRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=3, max_length=320)
     display_name: str = Field(min_length=1, max_length=200)
 
 
 class UserCreate(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=3, max_length=320)
     display_name: str = Field(min_length=1, max_length=200)
     role: str = "viewer"
 
@@ -28,6 +28,13 @@ class UserCreate(BaseModel):
 class UserRoleUpdate(BaseModel):
     role: str
     is_active: bool | None = None
+
+
+def _normalize_email(value: str) -> str:
+    email = value.strip().lower()
+    if "@" not in email or email.startswith("@") or email.endswith("@"):
+        raise HTTPException(status_code=422, detail="Valid email is required")
+    return email
 
 
 def _user_out(user: AppUser, *, api_token: str | None = None) -> dict:
@@ -59,7 +66,7 @@ async def bootstrap_admin(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Application users already exist")
     token = new_api_token()
     user = AppUser(
-        email=str(payload.email).lower(),
+        email=_normalize_email(payload.email),
         display_name=payload.display_name.strip(),
         role="admin",
         api_token_hash=hash_api_token(token),
@@ -91,7 +98,7 @@ async def create_user(
 ) -> dict:
     if payload.role not in ROLES:
         raise HTTPException(status_code=422, detail=f"Role must be one of {sorted(ROLES)}")
-    email = str(payload.email).lower()
+    email = _normalize_email(payload.email)
     existing = (await db.execute(select(AppUser).where(AppUser.email == email))).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status_code=409, detail="User email already exists")
