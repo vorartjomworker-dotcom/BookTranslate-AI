@@ -87,7 +87,7 @@ async def load_normalized_document(
             NormalizedAsset(
                 position=asset.position,
                 asset_type=asset.asset_type,
-                original_filename=asset.original_filename,
+                original_filename=f"figure-render-{render.id}.png" if render is not None else asset.original_filename,
                 media_type=render.media_type if render is not None else asset.media_type,
                 data=data,
                 sha256=render.sha256 if render is not None else asset.sha256,
