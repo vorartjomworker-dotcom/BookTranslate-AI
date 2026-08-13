@@ -1,13 +1,12 @@
+import asyncio
 import json
 
 import httpx
-import pytest
 
 from app.vision.providers import OpenAIVisionProvider
 
 
-@pytest.mark.asyncio
-async def test_openai_vision_provider_uses_responses_image_input() -> None:
+async def _run() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/responses"
         payload = json.loads(request.content)
@@ -41,3 +40,7 @@ async def test_openai_vision_provider_uses_responses_image_input() -> None:
     assert result.regions[0]["bbox"] == [0.1, 0.2, 0.5, 0.3]
     assert result.input_tokens == 20
     assert result.output_tokens == 12
+
+
+def test_openai_vision_provider_uses_responses_image_input() -> None:
+    asyncio.run(_run())
