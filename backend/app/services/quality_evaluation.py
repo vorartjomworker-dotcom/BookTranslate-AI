@@ -31,8 +31,9 @@ QUALITY_WEIGHTS = {
 
 _URL_RE = re.compile(r"https?://[^\s)\]}>\"']+", re.IGNORECASE)
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+_UNIT_PATTERN = r"(?:KiB|MiB|GiB|kHz|MHz|GHz|KB|MB|GB|ns|us|µs|ms|Hz|°C|%|B|V|A|W|s)"
 _NUMBER_RE = re.compile(
-    r"(?<![\w])[-+]?\d+(?:[.,]\d+)?(?:\s?(?:%|ns|us|µs|ms|s|Hz|kHz|MHz|GHz|B|KB|MB|GB|KiB|MiB|GiB|V|A|W|°C))?",
+    rf"(?<![\w])[-+]?\d+(?:[.,]\d+)?(?:\s?{_UNIT_PATTERN})?(?![\w])",
     re.IGNORECASE,
 )
 _CODE_RE = re.compile(
@@ -78,7 +79,11 @@ def _normalize_anchor(value: str) -> str:
     return value.strip().strip("`.,;:!?()[]{}<>").casefold()
 
 
-def _counter_score(source_values: list[str], target_values: list[str], normalizer) -> tuple[float, int, int, list[str], list[str]]:
+def _counter_score(
+    source_values: list[str],
+    target_values: list[str],
+    normalizer,
+) -> tuple[float, int, int, list[str], list[str]]:
     source = Counter(normalizer(item) for item in source_values if normalizer(item))
     target = Counter(normalizer(item) for item in target_values if normalizer(item))
     total = sum(source.values())
@@ -99,7 +104,26 @@ def _contains(text: str, needle: str, case_sensitive: bool) -> bool:
     return needle in text if case_sensitive else needle.casefold() in text.casefold()
 
 
-def _terminology_score(source: str, candidate: str, glossary: list[GlossaryPair]) -> tuple[float, list[dict], int]:
+def _strip_for_numeric_scan(text: str) -> str:
+    # URL/e-mail identity is evaluated separately. Removing them here avoids
+    # double-counting digits embedded in protocol paths or addresses.
+    return _EMAIL_RE.sub(" ", _URL_RE.sub(" ", text))
+
+
+def _strip_protected_for_language_scan(text: str) -> str:
+    # Required preserved anchors are not untranslated prose. Excluding them
+    # prevents a retained URL/file/flag from becoming a source-leakage hit.
+    value = _URL_RE.sub(" ", text)
+    value = _EMAIL_RE.sub(" ", value)
+    value = _CODE_RE.sub(" ", value)
+    return value
+
+
+def _terminology_score(
+    source: str,
+    candidate: str,
+    glossary: list[GlossaryPair],
+) -> tuple[float, list[dict], int]:
     opportunities = 0
     issues: list[dict] = []
     for item in glossary:
@@ -136,10 +160,12 @@ def _reference_similarity(candidate: str, reference: str | None) -> float | None
 
 
 def _source_leakage_score(source: str, candidate: str) -> tuple[float, list[str]]:
-    source_words = [item.casefold() for item in _LATIN_WORD_RE.findall(source)]
+    source_scan = _strip_protected_for_language_scan(source)
+    candidate_scan = _strip_protected_for_language_scan(candidate)
+    source_words = [item.casefold() for item in _LATIN_WORD_RE.findall(source_scan)]
     if len(source_words) < 4:
         return 100.0, []
-    lowered = " ".join(item.casefold() for item in _LATIN_WORD_RE.findall(candidate))
+    lowered = " ".join(item.casefold() for item in _LATIN_WORD_RE.findall(candidate_scan))
     hits: list[str] = []
     seen: set[str] = set()
     for index in range(len(source_words) - 3):
@@ -165,8 +191,7 @@ def _style_score(candidate: str) -> tuple[float, list[dict]]:
     if re.search(r"([!?.,;:])\1{2,}", candidate):
         score -= 10
         issues.append({"kind": "repeated_punctuation", "severity": "warning"})
-    pairs = [("(", ")"), ("[", "]"), ("{", "}")]
-    for left, right in pairs:
+    for left, right in [("(", ")"), ("[", "]"), ("{", "}")]:
         if candidate.count(left) != candidate.count(right):
             score -= 12
             issues.append({"kind": "unbalanced_brackets", "severity": "warning", "pair": left + right})
@@ -185,15 +210,11 @@ def score_translation_deterministically(
     glossary = glossary or []
     issues: list[dict] = []
 
-    source_numbers = _NUMBER_RE.findall(source)
-    candidate_numbers = _NUMBER_RE.findall(candidate)
-    numeric_score, missing_numbers, extra_numbers, missing_numeric_values, extra_numeric_values = _counter_score(
-        source_numbers, candidate_numbers, _normalize_number
-    )
-
     source_urls = _URL_RE.findall(source)
     candidate_urls = _URL_RE.findall(candidate)
-    url_score, missing_urls, extra_urls, missing_url_values, extra_url_values = _counter_score(source_urls, candidate_urls, _normalize_anchor)
+    url_score, missing_urls, extra_urls, missing_url_values, extra_url_values = _counter_score(
+        source_urls, candidate_urls, _normalize_anchor
+    )
 
     source_emails = _EMAIL_RE.findall(source)
     candidate_emails = _EMAIL_RE.findall(candidate)
@@ -203,7 +224,15 @@ def score_translation_deterministically(
 
     source_code = _CODE_RE.findall(source)
     candidate_code = _CODE_RE.findall(candidate)
-    code_score, missing_code, extra_code, missing_code_values, extra_code_values = _counter_score(source_code, candidate_code, _normalize_anchor)
+    code_score, missing_code, extra_code, missing_code_values, extra_code_values = _counter_score(
+        source_code, candidate_code, _normalize_anchor
+    )
+
+    source_numbers = _NUMBER_RE.findall(_strip_for_numeric_scan(source))
+    candidate_numbers = _NUMBER_RE.findall(_strip_for_numeric_scan(candidate))
+    numeric_score, missing_numbers, extra_numbers, missing_numeric_values, extra_numeric_values = _counter_score(
+        source_numbers, candidate_numbers, _normalize_number
+    )
 
     protected_parts: list[tuple[float, int]] = []
     for score, count in [
@@ -238,10 +267,14 @@ def score_translation_deterministically(
     sentence_ratio = candidate_sentences / source_sentences if source_sentences else 1.0
     sentence_score = 100.0 if sentence_ratio >= 0.5 else _round(sentence_ratio / 0.5 * 100.0)
 
-    completeness_score = _round(length_score * 0.25 + sentence_score * 0.15 + numeric_score * 0.30 + protected_score * 0.30)
+    completeness_score = _round(
+        length_score * 0.25 + sentence_score * 0.15 + numeric_score * 0.30 + protected_score * 0.30
+    )
     technical_integrity_score = _round(numeric_score * 0.45 + protected_score * 0.55)
 
-    terminology_score, terminology_issues, terminology_opportunities = _terminology_score(source, candidate, glossary)
+    terminology_score, terminology_issues, terminology_opportunities = _terminology_score(
+        source, candidate, glossary
+    )
     issues.extend(terminology_issues)
 
     source_leakage_score, leakage_phrases = _source_leakage_score(source, candidate)
@@ -249,7 +282,7 @@ def score_translation_deterministically(
         issues.append({"kind": "source_leakage", "severity": "warning", "phrases": leakage_phrases})
 
     hallucination_penalty = 0.0
-    hallucination_penalty += min(60.0, extra_numbers * 15.0)
+    hallucination_penalty += min(70.0, extra_numbers * 20.0)
     hallucination_penalty += min(30.0, (extra_urls + extra_emails) * 15.0)
     hallucination_penalty += min(30.0, extra_code * 10.0)
     if source_tokens and len(candidate_tokens) / max(1, len(source_tokens)) > 2.8:
@@ -301,9 +334,19 @@ def score_translation_deterministically(
         "schema": QUALITY_SCHEMA,
         "weights": QUALITY_WEIGHTS,
         "anchors": {
-            "numeric": {"source": len(source_numbers), "missing": missing_numbers, "extra": extra_numbers, "score": numeric_score},
+            "numeric": {
+                "source": len(source_numbers),
+                "missing": missing_numbers,
+                "extra": extra_numbers,
+                "score": numeric_score,
+            },
             "url": {"source": len(source_urls), "missing": missing_urls, "extra": extra_urls, "score": url_score},
-            "email": {"source": len(source_emails), "missing": missing_emails, "extra": extra_emails, "score": email_score},
+            "email": {
+                "source": len(source_emails),
+                "missing": missing_emails,
+                "extra": extra_emails,
+                "score": email_score,
+            },
             "code": {"source": len(source_code), "missing": missing_code, "extra": extra_code, "score": code_score},
             "protected_score": protected_score,
         },
@@ -331,7 +374,12 @@ def score_translation_deterministically(
     )
 
 
-def quality_fingerprint(source: str, candidate: str, glossary: list[GlossaryPair], reference: str | None) -> str:
+def quality_fingerprint(
+    source: str,
+    candidate: str,
+    glossary: list[GlossaryPair],
+    reference: str | None,
+) -> str:
     payload = {
         "schema": QUALITY_SCHEMA,
         "source": source,
@@ -339,7 +387,9 @@ def quality_fingerprint(source: str, candidate: str, glossary: list[GlossaryPair
         "reference": reference,
         "glossary": [asdict(item) for item in glossary],
     }
-    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
 def combine_quality_scores(
@@ -358,12 +408,18 @@ def combine_quality_scores(
         total = deterministic_weight + judge_weight
         if total <= 0:
             deterministic_weight, judge_weight, total = 1.0, 0.0, 1.0
-        combined = (deterministic_score * deterministic_weight + judge_score * judge_weight) / total
+        combined = (
+            deterministic_score * deterministic_weight + judge_score * judge_weight
+        ) / total
     combined = _round(combined)
     return min(combined, 59.0) if critical_fail else combined
 
 
-async def _glossary_for_translation(db: AsyncSession, translation: Translation, segment: Segment) -> list[GlossaryPair]:
+async def _glossary_for_translation(
+    db: AsyncSession,
+    translation: Translation,
+    segment: Segment,
+) -> list[GlossaryPair]:
     chapter = await db.get(Chapter, segment.chapter_id)
     if chapter is None:
         return []
@@ -379,7 +435,10 @@ async def _glossary_for_translation(db: AsyncSession, translation: Translation, 
             )
         ).scalars().all()
     )
-    return [GlossaryPair(item.source_term, item.target_term, item.case_sensitive) for item in rows]
+    return [
+        GlossaryPair(item.source_term, item.target_term, item.case_sensitive)
+        for item in rows
+    ]
 
 
 async def evaluate_translation_quality_v2(
@@ -416,7 +475,9 @@ async def evaluate_translation_quality_v2(
         judge_weight=judge_weight,
         critical_fail=deterministic.critical_fail,
     )
-    fingerprint = quality_fingerprint(segment.source_text or "", version.text, glossary, reference)
+    fingerprint = quality_fingerprint(
+        segment.source_text or "", version.text, glossary, reference
+    )
     evaluation = TranslationQualityEvaluation(
         translation_version_id=version.id,
         score_schema=QUALITY_SCHEMA,
@@ -437,7 +498,10 @@ async def evaluate_translation_quality_v2(
         details_json={
             **deterministic.details,
             "judge_score": judge_score,
-            "score_weights": {"deterministic": deterministic_weight, "judge": judge_weight},
+            "score_weights": {
+                "deterministic": deterministic_weight,
+                "judge": judge_weight,
+            },
         },
     )
     db.add(evaluation)
@@ -453,7 +517,9 @@ async def evaluate_translation_quality_v2(
     memory_rows = list(
         (
             await db.execute(
-                select(TranslationMemoryEntry).where(TranslationMemoryEntry.origin_translation_version_id == version.id)
+                select(TranslationMemoryEntry).where(
+                    TranslationMemoryEntry.origin_translation_version_id == version.id
+                )
             )
         ).scalars().all()
     )
@@ -470,7 +536,10 @@ async def evaluate_translation_quality_v2(
     return evaluation
 
 
-async def quality_history(db: AsyncSession, version_id: uuid.UUID) -> list[TranslationQualityEvaluation]:
+async def quality_history(
+    db: AsyncSession,
+    version_id: uuid.UUID,
+) -> list[TranslationQualityEvaluation]:
     return list(
         (
             await db.execute(
