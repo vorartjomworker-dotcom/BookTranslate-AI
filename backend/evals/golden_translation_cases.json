@@ -1,0 +1,77 @@
+{
+  "schema": "booktranslate-quality-regression-v1",
+  "description": "Synthetic technical-book translation cases. Positive cases validate fidelity; adversarial cases validate failure detection without external LLM calls.",
+  "positive_mean_min": 92.0,
+  "cases": [
+    {
+      "id": "cpp-latency-positive",
+      "kind": "positive",
+      "source": "The hot path must keep latency below 25 µs and preserve std::atomic semantics.",
+      "candidate": "Горячий путь должен удерживать задержку ниже 25 µs и сохранять семантику std::atomic.",
+      "reference": "Горячий путь должен удерживать задержку ниже 25 µs и сохранять семантику std::atomic.",
+      "glossary": [{"source_term": "hot path", "target_term": "горячий путь"}],
+      "expected_min": 95.0,
+      "expect_critical_fail": false
+    },
+    {
+      "id": "api-url-positive",
+      "kind": "positive",
+      "source": "Send the request to https://api.example.test/v1/orders and contact ops@example.test if the response exceeds 250 ms.",
+      "candidate": "Отправьте запрос на https://api.example.test/v1/orders и свяжитесь с ops@example.test, если ответ занимает более 250 ms.",
+      "reference": "Отправьте запрос на https://api.example.test/v1/orders и свяжитесь с ops@example.test, если ответ занимает более 250 ms.",
+      "glossary": [],
+      "expected_min": 94.0,
+      "expect_critical_fail": false
+    },
+    {
+      "id": "cli-glossary-positive",
+      "kind": "positive",
+      "source": "Configure the lock-free queue with --max-batch=64 before starting matching_engine.cpp.",
+      "candidate": "Перед запуском matching_engine.cpp настройте безблокировочную очередь с параметром --max-batch=64.",
+      "reference": "Перед запуском matching_engine.cpp настройте безблокировочную очередь с параметром --max-batch=64.",
+      "glossary": [{"source_term": "lock-free queue", "target_term": "безблокировочную очередь"}],
+      "expected_min": 94.0,
+      "expect_critical_fail": false
+    },
+    {
+      "id": "missing-numeric-critical",
+      "kind": "adversarial",
+      "source": "The timeout is 30 ms and the retry limit is 4.",
+      "candidate": "Тайм-аут и предел повторных попыток задаются в конфигурации.",
+      "reference": "Тайм-аут равен 30 ms, а предел повторных попыток — 4.",
+      "glossary": [],
+      "expected_max": 59.0,
+      "expect_critical_fail": true
+    },
+    {
+      "id": "missing-url-critical",
+      "kind": "adversarial",
+      "source": "Open https://docs.example.test/runtime for the deployment procedure.",
+      "candidate": "Откройте документацию по процедуре развёртывания.",
+      "reference": "Откройте https://docs.example.test/runtime для просмотра процедуры развёртывания.",
+      "glossary": [],
+      "expected_max": 59.0,
+      "expect_critical_fail": true
+    },
+    {
+      "id": "hallucinated-numerics",
+      "kind": "adversarial",
+      "source": "The worker reads messages from the translation queue.",
+      "candidate": "Воркер читает сообщения из очереди перевода со скоростью 10000 сообщений в секунду и использует 8 потоков.",
+      "reference": "Воркер читает сообщения из очереди перевода.",
+      "glossary": [{"source_term": "translation queue", "target_term": "очереди перевода"}],
+      "expected_max": 82.0,
+      "expect_critical_fail": false
+    },
+    {
+      "id": "terminology-violation",
+      "kind": "adversarial",
+      "source": "A memory pool prevents allocator jitter on the hot path.",
+      "candidate": "Куча памяти уменьшает джиттер аллокатора на горячем пути.",
+      "reference": "Пул памяти предотвращает джиттер аллокатора на горячем пути.",
+      "glossary": [{"source_term": "memory pool", "target_term": "пул памяти"}],
+      "expected_max": 86.0,
+      "expect_critical_fail": false
+    }
+  ]
+}
