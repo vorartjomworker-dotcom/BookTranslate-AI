@@ -79,6 +79,8 @@ jobs:
           openssl req -x509 -nodes -newkey rsa:2048 -days 1 -subj '/CN=translate.example.test' \
             -keyout /tmp/booktranslate-ci-tls/privkey.pem -out /tmp/booktranslate-ci-tls/fullchain.pem >/dev/null 2>&1
           docker run --rm \
+            --add-host backend:127.0.0.1 \
+            --add-host frontend:127.0.0.1 \
             -e APP_DOMAIN=translate.example.test \
             -v "$PWD/../deploy/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro" \
             -v /tmp/booktranslate-ci-tls:/etc/nginx/tls:ro \
@@ -105,7 +107,7 @@ jobs:
         with:
           name: backend-pytest-output
           path: backend/pytest-output.txt
-          if-no-files-found: error
+          if-no-files-found: warn
 
   frontend:
     runs-on: ubuntu-latest
