@@ -31,7 +31,7 @@ docker compose exec -T redis redis-cli SET "$REDIS_KEY" "$DRILL_ID" >/dev/null
 docker compose exec -T backend sh -c "printf '%s\n' '$DRILL_ID' > '$MARKER_FILE'"
 
 echo "[$DRILL_ID] creating backup"
-BACKUP_ROOT="$BACKUP_ROOT" "$ROOT_DIR/scripts/backup.sh" >/tmp/booktranslate-restore-drill-backup.log
+BACKUP_ROOT="$BACKUP_ROOT" bash "$ROOT_DIR/scripts/backup.sh" >/tmp/booktranslate-restore-drill-backup.log
 BACKUP_DIR="$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)"
 test -n "$BACKUP_DIR"
 
@@ -44,7 +44,7 @@ docker compose exec -T redis redis-cli DEL "$REDIS_KEY" >/dev/null
 docker compose exec -T backend rm -f "$MARKER_FILE"
 
 echo "[$DRILL_ID] restoring backup"
-"$ROOT_DIR/scripts/restore.sh" "$BACKUP_DIR" >/tmp/booktranslate-restore-drill-restore.log
+bash "$ROOT_DIR/scripts/restore.sh" "$BACKUP_DIR" >/tmp/booktranslate-restore-drill-restore.log
 
 for attempt in $(seq 1 30); do
   if docker compose exec -T backend python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)" >/dev/null 2>&1; then
