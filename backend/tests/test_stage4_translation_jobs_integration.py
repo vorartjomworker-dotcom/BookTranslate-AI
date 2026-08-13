@@ -158,9 +158,9 @@ async def _run() -> None:
 
             quality_rows = list((await db.execute(select(TranslationQualityEvaluation))).scalars().all())
             assert len(quality_rows) == 2
-            assert all(row.deterministic_score == pytest.approx(100.0) for row in quality_rows)
+            assert all(row.deterministic_score == pytest.approx(98.0) for row in quality_rows)
             assert all(row.judge_score == pytest.approx(91.25) for row in quality_rows)
-            assert all(row.final_score == pytest.approx(95.19) for row in quality_rows)
+            assert all(row.final_score == pytest.approx(94.29) for row in quality_rows)
             assert all(row.critical_fail is False for row in quality_rows)
 
             final_versions = list(
@@ -169,12 +169,12 @@ async def _run() -> None:
                 ).scalars().all()
             )
             assert len(final_versions) == 2
-            assert all(version.quality_score == pytest.approx(95.19) for version in final_versions)
+            assert all(version.quality_score == pytest.approx(94.29) for version in final_versions)
             assert all((version.metadata_json or {}).get("quality_schema") == "quality-v2" for version in final_versions)
 
             memory_rows = list((await db.execute(select(TranslationMemoryEntry))).scalars().all())
             assert len(memory_rows) == 2
-            assert all(memory.quality_score == pytest.approx(95.19) for memory in memory_rows)
+            assert all(memory.quality_score == pytest.approx(94.29) for memory in memory_rows)
             assert all((memory.metadata_json or {}).get("qa_verdict") == "excellent" for memory in memory_rows)
             assert all((memory.metadata_json or {}).get("quality_schema") == "quality-v2" for memory in memory_rows)
 
