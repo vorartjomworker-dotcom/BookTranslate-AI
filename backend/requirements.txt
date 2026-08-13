@@ -10,3 +10,5 @@ python-docx==1.2.0
 EbookLib==0.19
 beautifulsoup4==4.13.4
 httpx==0.28.1
+PyJWT[crypto]==2.10.1
+prometheus-client==0.22.1
