@@ -19,9 +19,12 @@ class AppUser(Base, TimestampMixin):
     api_token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     oidc_issuer: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
     oidc_subject: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
+    scim_external_id: Mapped[str | None] = mapped_column(String(500), nullable=True, unique=True, index=True)
+    scim_managed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
     assigned_reviews = relationship("HumanReview", back_populates="assigned_user", foreign_keys="HumanReview.assigned_user_id")
     review_comments = relationship("ReviewComment", back_populates="author_user", foreign_keys="ReviewComment.author_user_id")
     audit_events = relationship("AuditEvent", back_populates="actor_user", passive_deletes=True)
