@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     upload_dir: str = "/data/uploads"
     max_upload_size_mb: int = 100
 
+    auth_required: bool = False
+    bootstrap_admin_token: str | None = None
+
     ai_request_timeout_seconds: int = 120
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
