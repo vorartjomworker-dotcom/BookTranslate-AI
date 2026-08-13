@@ -52,11 +52,13 @@ async def authenticate_api_token(db: AsyncSession, token: str) -> AppUser | None
 
 
 async def get_current_actor(
-    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ) -> AppUser | DevActor:
-    state_actor = getattr(request.state, "actor", None)
+    # Keep credentials/db first for compatibility with direct service-level calls used
+    # by the existing integration suite, while FastAPI still injects Request by type.
+    state_actor = getattr(request.state, "actor", None) if request is not None else None
     if state_actor is not None:
         return state_actor
     if not settings.auth_required and credentials is None:
