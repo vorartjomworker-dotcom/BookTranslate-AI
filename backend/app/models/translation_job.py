@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,6 +31,9 @@ class TranslationJob(Base, TimestampMixin):
     completed_segments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_segments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     skipped_segments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    estimated_cost_usd: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False, default=0)
     cancellation_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     config_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     errors_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)

@@ -19,16 +19,23 @@ from app.models.translation import Translation
 from app.models.translation_version import TranslationVersion
 from app.services.context_builder import build_translation_context
 from app.services.prompt_builder import get_default_role_prompt, render_user_prompt
+from app.services.provider_routing import (
+    acquire_route,
+    estimate_request_tokens,
+    estimate_response_cost,
+    release_route,
+)
 from app.services.translation_memory import remember_translation
 
 
 @dataclass(slots=True)
 class ModelStage:
     provider: str
-    model: str
+    model: str | None
     role: str
     temperature: float | None = None
     max_output_tokens: int | None = 4000
+    routing_strategy: str = "priority"
 
 
 async def get_or_create_translation(
@@ -39,7 +46,6 @@ async def get_or_create_translation(
 ) -> Translation:
     if await db.get(Segment, segment_id) is None:
         raise LookupError("Segment not found")
-
     result = await db.execute(
         select(Translation).where(
             Translation.segment_id == segment_id,
@@ -48,11 +54,7 @@ async def get_or_create_translation(
     )
     translation = result.scalar_one_or_none()
     if translation is None:
-        translation = Translation(
-            segment_id=segment_id,
-            target_language=target_language,
-            status="pending",
-        )
+        translation = Translation(segment_id=segment_id, target_language=target_language, status="pending")
         db.add(translation)
         await db.flush()
     return translation
@@ -68,7 +70,6 @@ async def _get_or_create_prompt(db: AsyncSession, role: str) -> PromptVersion:
     prompt = result.scalar_one_or_none()
     if prompt is not None:
         return prompt
-
     system_prompt, template = get_default_role_prompt(role)
     prompt = PromptVersion(
         name=f"default_{role}",
@@ -85,22 +86,24 @@ async def _get_or_create_prompt(db: AsyncSession, role: str) -> PromptVersion:
 
 
 async def _latest_version(db: AsyncSession, translation_id: uuid.UUID) -> TranslationVersion | None:
-    result = await db.execute(
-        select(TranslationVersion)
-        .where(TranslationVersion.translation_id == translation_id)
-        .order_by(TranslationVersion.version_number.desc())
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
+    return (
+        await db.execute(
+            select(TranslationVersion)
+            .where(TranslationVersion.translation_id == translation_id)
+            .order_by(TranslationVersion.version_number.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
 
 
 async def _next_version_number(db: AsyncSession, translation_id: uuid.UUID) -> int:
-    result = await db.execute(
-        select(func.max(TranslationVersion.version_number)).where(
-            TranslationVersion.translation_id == translation_id
+    current = (
+        await db.execute(
+            select(func.max(TranslationVersion.version_number)).where(
+                TranslationVersion.translation_id == translation_id
+            )
         )
-    )
-    current = result.scalar_one_or_none()
+    ).scalar_one_or_none()
     return int(current or 0) + 1
 
 
@@ -111,22 +114,14 @@ async def generate_translation_version(
     segment_id: uuid.UUID,
     target_language: str,
     stage: ModelStage,
+    translation_job_id: uuid.UUID | None = None,
 ) -> tuple[Translation, TranslationVersion, ModelRun]:
     segment = await db.get(Segment, segment_id)
     if segment is None:
         raise LookupError("Segment not found")
-
-    translation = await get_or_create_translation(
-        db,
-        segment_id=segment.id,
-        target_language=target_language,
-    )
+    translation = await get_or_create_translation(db, segment_id=segment.id, target_language=target_language)
     prompt_version = await _get_or_create_prompt(db, stage.role)
-    context = await build_translation_context(
-        db,
-        segment_id=segment.id,
-        target_language=target_language,
-    )
+    context = await build_translation_context(db, segment_id=segment.id, target_language=target_language)
     latest = await _latest_version(db, translation.id)
     candidate = latest.text if latest is not None else None
     user_prompt = render_user_prompt(
@@ -135,29 +130,55 @@ async def generate_translation_version(
         template=prompt_version.template,
         candidate_text=candidate,
     )
+    estimated_tokens = estimate_request_tokens(
+        prompt_version.system_prompt,
+        user_prompt,
+        stage.max_output_tokens,
+    )
+    route = await acquire_route(
+        db,
+        gateway,
+        requested_provider=stage.provider,
+        requested_model=stage.model,
+        role=stage.role,
+        routing_strategy=stage.routing_strategy,
+        estimated_tokens=estimated_tokens,
+    )
     request_hash = hashlib.sha256(
-        (prompt_version.system_prompt + "\n" + user_prompt).encode("utf-8")
+        (
+            prompt_version.system_prompt
+            + "\n"
+            + user_prompt
+            + "\n"
+            + route.provider
+            + "/"
+            + route.model
+        ).encode("utf-8")
     ).hexdigest()
-
     run = ModelRun(
         segment_id=segment.id,
         translation_id=translation.id,
+        translation_job_id=translation_job_id,
         prompt_version_id=prompt_version.id,
-        provider=stage.provider,
-        model=stage.model,
+        provider=route.provider,
+        model=route.model,
         role=stage.role,
         status="running",
         request_hash=request_hash,
-        metadata_json={"target_language": target_language},
+        metadata_json={
+            "target_language": target_language,
+            "requested_provider": stage.provider,
+            "requested_model": stage.model,
+            "routing_strategy": stage.routing_strategy,
+            "policy_id": route.policy_id,
+        },
     )
     db.add(run)
     translation.status = "running"
     await db.commit()
     await db.refresh(run)
-    await db.refresh(translation)
-
     request = ModelRequest(
-        model=stage.model,
+        model=route.model,
         system_prompt=prompt_version.system_prompt,
         user_prompt=user_prompt,
         temperature=stage.temperature,
@@ -166,7 +187,7 @@ async def generate_translation_version(
     )
     started = time.perf_counter()
     try:
-        response = await gateway.generate(stage.provider, request)
+        response = await gateway.generate(route.provider, request)
     except Exception as exc:
         run.status = "failed"
         run.error_text = str(exc)
@@ -174,18 +195,17 @@ async def generate_translation_version(
         translation.status = "failed"
         await db.commit()
         raise
+    finally:
+        await release_route(route)
 
     run.status = "completed"
     run.provider_request_id = response.request_id
     run.input_tokens = response.input_tokens
     run.output_tokens = response.output_tokens
+    run.estimated_cost_usd = estimate_response_cost(route, response)
     run.output_text = response.text
     run.latency_ms = int((time.perf_counter() - started) * 1000)
-    run.metadata_json = {
-        **run.metadata_json,
-        "provider_metadata": response.metadata,
-    }
-
+    run.metadata_json = {**run.metadata_json, "provider_metadata": response.metadata}
     version = TranslationVersion(
         translation_id=translation.id,
         model_run_id=run.id,
@@ -195,7 +215,7 @@ async def generate_translation_version(
         provider=response.provider,
         model=response.model,
         is_final=False,
-        metadata_json={"prompt_version": prompt_version.version_number},
+        metadata_json={"prompt_version": prompt_version.version_number, "policy_id": route.policy_id},
     )
     db.add(version)
     translation.status = "generated"
@@ -216,13 +236,11 @@ async def finalize_translation_version(
     version = await db.get(TranslationVersion, version_id)
     if translation is None or version is None or version.translation_id != translation.id:
         raise LookupError("Translation version not found")
-
     versions_result = await db.execute(
         select(TranslationVersion).where(TranslationVersion.translation_id == translation.id)
     )
     for item in versions_result.scalars().all():
         item.is_final = item.id == version.id
-
     translation.status = "approved"
     translation.selected_version_number = version.version_number
     segment = await db.get(Segment, translation.segment_id)
@@ -234,7 +252,6 @@ async def finalize_translation_version(
     book = await db.get(Book, chapter.book_id)
     if book is None:
         raise LookupError("Book not found")
-
     segment.translated_text = version.text
     segment.status = "translated"
     if segment.source_hash:
@@ -262,12 +279,12 @@ async def run_translation_pipeline(
     target_language: str,
     stages: list[ModelStage],
     finalize_last: bool = True,
+    translation_job_id: uuid.UUID | None = None,
 ) -> tuple[Translation, list[TranslationVersion]]:
     if not stages:
         raise ValueError("At least one model stage is required")
     if stages[0].role != "translator":
         raise ValueError("The first pipeline stage must have role 'translator'")
-
     versions: list[TranslationVersion] = []
     translation: Translation | None = None
     for stage in stages:
@@ -277,9 +294,9 @@ async def run_translation_pipeline(
             segment_id=segment_id,
             target_language=target_language,
             stage=stage,
+            translation_job_id=translation_job_id,
         )
         versions.append(version)
-
     assert translation is not None
     if finalize_last:
         versions[-1] = await finalize_translation_version(

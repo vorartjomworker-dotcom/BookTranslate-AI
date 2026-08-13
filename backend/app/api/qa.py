@@ -15,11 +15,12 @@ router = APIRouter(tags=["translation-qa"])
 
 
 class QAEvaluatorRequest(BaseModel):
-    provider: str
-    model: str
+    provider: str = "auto"
+    model: str | None = None
     weight: float = Field(default=1.0, gt=0)
     temperature: float | None = 0.0
     max_output_tokens: int | None = 1200
+    routing_strategy: str = "priority"
 
 
 class QARequest(BaseModel):
@@ -35,29 +36,19 @@ async def _validate(db: AsyncSession, translation_id: uuid.UUID, version_id: uui
 
 
 @router.post("/api/translations/{translation_id}/versions/{version_id}/qa")
-async def run_translation_qa(
-    translation_id: uuid.UUID,
-    version_id: uuid.UUID,
-    payload: QARequest,
-    db: AsyncSession = Depends(get_db),
-) -> dict:
+async def run_translation_qa(translation_id: uuid.UUID, version_id: uuid.UUID, payload: QARequest, db: AsyncSession = Depends(get_db)) -> dict:
     await _validate(db, translation_id, version_id)
     if not payload.evaluators:
         raise HTTPException(status_code=422, detail="At least one QA evaluator is required")
     gateway = ModelGateway.from_settings(settings)
-    evaluators = [QAEvaluator(**item.model_dump()) for item in payload.evaluators]
     try:
-        await evaluate_translation_version(db, gateway, version_id=version_id, evaluators=evaluators)
-    except ValueError as exc:
+        await evaluate_translation_version(db, gateway, version_id=version_id, evaluators=[QAEvaluator(**item.model_dump()) for item in payload.evaluators])
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return await qa_summary(db, version_id)
 
 
 @router.get("/api/translations/{translation_id}/versions/{version_id}/qa")
-async def get_translation_qa(
-    translation_id: uuid.UUID,
-    version_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-) -> dict:
+async def get_translation_qa(translation_id: uuid.UUID, version_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict:
     await _validate(db, translation_id, version_id)
     return await qa_summary(db, version_id)

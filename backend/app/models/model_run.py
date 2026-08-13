@@ -1,6 +1,7 @@
 import uuid
+from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,6 +24,12 @@ class ModelRun(Base, TimestampMixin):
         nullable=True,
         index=True,
     )
+    translation_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("translation_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     prompt_version_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("prompt_versions.id", ondelete="SET NULL"),
@@ -38,11 +45,13 @@ class ModelRun(Base, TimestampMixin):
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    estimated_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(14, 6), nullable=True)
     output_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
     segment = relationship("Segment", back_populates="model_runs")
     translation = relationship("Translation", back_populates="model_runs", foreign_keys=[translation_id])
+    translation_job = relationship("TranslationJob")
     prompt_version = relationship("PromptVersion", back_populates="model_runs")
     translation_versions = relationship("TranslationVersion", back_populates="model_run")
