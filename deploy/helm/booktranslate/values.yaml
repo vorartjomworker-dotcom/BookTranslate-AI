@@ -63,8 +63,12 @@ keda:
   minReplicaCount: 1
   maxReplicaCount: 20
   listLength: "5"
-  # KEDA redis-list scaler uses a full Redis connection string from this Secret key.
-  redisSecretKey: redis-url
+  activationListLength: "1"
+  # KEDA's Redis List scaler requires host:port rather than a redis:// URL.
+  redisAddress: redis.example.internal:6379
+  redisDatabaseIndex: "0"
+  redisEnableTLS: "true"
+  redisPasswordSecretKey: redis-password
 
 service:
   backendPort: 8000
@@ -120,6 +124,7 @@ secrets:
   keys:
     databaseUrl: database-url
     redisUrl: redis-url
+    redisPassword: redis-password
     bootstrapAdminToken: bootstrap-admin-token
     authSigningSecret: auth-signing-secret
     oidcClientSecret: oidc-client-secret
@@ -142,6 +147,10 @@ podDisruptionBudget:
 
 networkPolicy:
   enabled: true
+  ingressNamespaceSelector:
+    kubernetes.io/metadata.name: ingress-nginx
+  monitoringNamespaceSelector:
+    kubernetes.io/metadata.name: monitoring
 
 serviceMonitor:
   enabled: false
