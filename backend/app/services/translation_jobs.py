@@ -140,6 +140,35 @@ def _budget_violation(job: TranslationJob, config: dict) -> str | None:
     return None
 
 
+async def _stop_for_budget(
+    db: AsyncSession,
+    job: TranslationJob,
+    config: dict,
+    errors: list,
+    *,
+    segment_id: uuid.UUID | None = None,
+) -> bool:
+    violation = _budget_violation(job, config)
+    if violation is None:
+        return False
+    error = {
+        "kind": "budget_exceeded",
+        "limit": violation,
+        "cost_usd": str(job.estimated_cost_usd),
+        "input_tokens": job.input_tokens,
+        "output_tokens": job.output_tokens,
+    }
+    if segment_id is not None:
+        error["segment_id"] = str(segment_id)
+    errors.append(error)
+    job.status = "budget_exceeded"
+    job.errors_json = errors
+    job.current_segment_id = None
+    job.completed_at = datetime.now(timezone.utc)
+    await db.commit()
+    return True
+
+
 async def process_job(db: AsyncSession, gateway: ModelGateway, job_id: uuid.UUID) -> TranslationJob:
     job = await db.get(TranslationJob, job_id)
     if job is None:
@@ -167,14 +196,7 @@ async def process_job(db: AsyncSession, gateway: ModelGateway, job_id: uuid.UUID
     for segment in segments:
         await db.refresh(job)
         await _refresh_job_telemetry(db, job)
-        violation = _budget_violation(job, config)
-        if violation:
-            errors.append({"kind": "budget_exceeded", "limit": violation, "cost_usd": str(job.estimated_cost_usd), "input_tokens": job.input_tokens, "output_tokens": job.output_tokens})
-            job.status = "budget_exceeded"
-            job.errors_json = errors
-            job.current_segment_id = None
-            job.completed_at = datetime.now(timezone.utc)
-            await db.commit()
+        if await _stop_for_budget(db, job, config, errors):
             return job
         if job.cancellation_requested:
             job.status = "cancelled"
@@ -205,6 +227,8 @@ async def process_job(db: AsyncSession, gateway: ModelGateway, job_id: uuid.UUID
             errors.append({"segment_id": str(segment.id), "kind": "translation_error", "error": str(last_error)[:2000]})
             job.errors_json = errors
             await _refresh_job_telemetry(db, job)
+            if await _stop_for_budget(db, job, config, errors, segment_id=segment.id):
+                return job
             await db.commit()
             if stop_on_error:
                 job.status = "failed"
@@ -227,11 +251,15 @@ async def process_job(db: AsyncSession, gateway: ModelGateway, job_id: uuid.UUID
                 job.errors_json = errors
         job.completed_segments += 1
         await _refresh_job_telemetry(db, job)
+        if await _stop_for_budget(db, job, config, errors, segment_id=segment.id):
+            return job
         await db.commit()
 
     job.current_segment_id = None
     job.completed_at = datetime.now(timezone.utc)
     await _refresh_job_telemetry(db, job)
+    if await _stop_for_budget(db, job, config, errors):
+        return job
     job.status = "completed_with_warnings" if job.failed_segments or errors else "completed"
     job.errors_json = errors
     await db.commit()
