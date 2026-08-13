@@ -228,12 +228,15 @@ async def _run() -> None:
             resolved, selected = await resolve_human_review(
                 db,
                 review_id=reviews[0].id,
-                action="approve",
+                action="edit",
                 reviewer_id="reviewer@example.com",
-                notes="Approved in Stage 5 integration test",
+                edited_text="Глава один",
+                notes="Edited in Stage 5 integration test",
             )
-            assert resolved.status == "approved"
+            assert resolved.status == "edited"
             assert selected is not None and selected.is_final is True
+            assert selected.role == "human_reviewer"
+            assert selected.text == "Глава один"
 
             report = await build_book_qa_report(
                 db,
