@@ -66,13 +66,18 @@ async def refresh_user_session(
     refresh_token: str,
 ) -> tuple[UserSession, AppUser, str, str]:
     now = _now()
+    # Refresh-token rotation is single-use. Lock the matching session row so two
+    # concurrent refresh requests cannot both validate the same old token and
+    # independently issue replacement credentials.
     row = (
         await db.execute(
-            select(UserSession).where(
+            select(UserSession)
+            .where(
                 UserSession.refresh_token_hash == hash_api_token(refresh_token),
                 UserSession.revoked_at.is_(None),
                 UserSession.refresh_expires_at > now,
             )
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if row is None:
