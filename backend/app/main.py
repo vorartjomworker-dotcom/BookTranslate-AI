@@ -13,11 +13,12 @@ from app.api.qa import router as qa_router
 from app.api.reviews import router as reviews_router
 from app.api.translations import router as translations_router
 from app.api.upload import router as upload_router
+from app.api.workbench import router as workbench_router
 from app.core.config import settings
 from app.db import check_database
 from app.redis_client import check_redis
 
-app = FastAPI(title=settings.app_name, version="0.6.0")
+app = FastAPI(title=settings.app_name, version="0.7.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,6 +38,7 @@ app.include_router(qa_router)
 app.include_router(reviews_router)
 app.include_router(book_qa_router)
 app.include_router(model_policies_router)
+app.include_router(workbench_router)
 app.include_router(ai_router)
 
 
