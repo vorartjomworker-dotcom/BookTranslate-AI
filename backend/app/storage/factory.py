@@ -21,5 +21,6 @@ def create_storage(config: Settings = settings) -> StorageBackend:
             secret_key=config.s3_secret_key,
             use_ssl=config.s3_use_ssl,
             addressing_style=config.s3_addressing_style,
+            presign_downloads=config.s3_presign_downloads,
         )
     raise RuntimeError(f"Unsupported STORAGE_BACKEND: {config.storage_backend}")
