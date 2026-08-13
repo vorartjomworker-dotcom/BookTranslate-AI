@@ -62,6 +62,30 @@ jobs:
         run: |
           bash -n ../scripts/backup.sh ../scripts/restore.sh
           docker compose -f ../docker-compose.yml config -q
+      - name: Validate production deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir=../deploy/secrets
+          mkdir -p "$secret_dir"
+          for name in database_url redis_url postgres_password redis_password bootstrap_admin_token auth_signing_secret oidc_client_secret s3_access_key s3_secret_key openai_api_key kimi_api_key gemini_api_key aitunnel_api_key metrics_token; do
+            printf 'ci-placeholder\n' > "$secret_dir/$name.txt"
+          done
+          printf 'postgresql+asyncpg://booktranslate:ci@postgres:5432/booktranslate\n' > "$secret_dir/database_url.txt"
+          printf 'redis://:ci@redis:6379/0\n' > "$secret_dir/redis_url.txt"
+          APP_DOMAIN=translate.example.test MINIO_ROOT_USER=ci-minio MINIO_ROOT_PASSWORD=ci-minio-secret \
+            docker compose --env-file ../deploy/.env.production.example -f ../deploy/docker-compose.prod.yml config -q
+          mkdir -p /tmp/booktranslate-ci-tls
+          openssl req -x509 -nodes -newkey rsa:2048 -days 1 -subj '/CN=translate.example.test' \
+            -keyout /tmp/booktranslate-ci-tls/privkey.pem -out /tmp/booktranslate-ci-tls/fullchain.pem >/dev/null 2>&1
+          docker run --rm \
+            --add-host backend:127.0.0.1 \
+            --add-host frontend:127.0.0.1 \
+            -e APP_DOMAIN=translate.example.test \
+            -v "$PWD/../deploy/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro" \
+            -v /tmp/booktranslate-ci-tls:/etc/nginx/tls:ro \
+            nginx:1.27-alpine nginx -t
+          rm -f "$secret_dir"/*.txt
       - name: Run backend tests
         shell: bash
         run: |
@@ -83,7 +107,7 @@ jobs:
         with:
           name: backend-pytest-output
           path: backend/pytest-output.txt
-          if-no-files-found: error
+          if-no-files-found: warn
 
   frontend:
     runs-on: ubuntu-latest

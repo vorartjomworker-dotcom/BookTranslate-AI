@@ -1,5 +1,6 @@
+import asyncio
 import mimetypes
-import shutil
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from app.models.section import Section
 from app.models.segment import Segment
 from app.services.document_parser import parse_document
 from app.services.segmentation import segment_chapter
-
+from app.storage.factory import create_storage
 
 router = APIRouter(prefix="/api/books", tags=["books"])
 _ALLOWED_FORMATS = {".docx", ".epub"}
@@ -47,7 +48,6 @@ async def _save_upload(file: UploadFile, destination: Path) -> int:
     destination.parent.mkdir(parents=True, exist_ok=True)
     max_bytes = settings.max_upload_size_mb * 1024 * 1024
     total = 0
-
     try:
         with destination.open("wb") as output:
             while chunk := await file.read(_CHUNK_SIZE):
@@ -63,7 +63,6 @@ async def _save_upload(file: UploadFile, destination: Path) -> int:
         raise
     finally:
         await file.close()
-
     return total
 
 
@@ -84,27 +83,38 @@ async def upload_book(
 ) -> UploadResponse:
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Filename is required")
-
     original_filename = Path(file.filename).name
     suffix = Path(original_filename).suffix.lower()
     if suffix not in _ALLOWED_FORMATS:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Only EPUB and DOCX files are supported at this stage",
-        )
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Only EPUB and DOCX files are supported at this stage")
 
     stored_filename = f"{uuid.uuid4()}{suffix}"
-    destination = Path(settings.upload_dir) / stored_filename
+    storage = create_storage(settings)
+    is_local_storage = settings.storage_backend.strip().lower() == "local"
+    if is_local_storage:
+        destination = Path(settings.upload_dir) / stored_filename
+    else:
+        handle = tempfile.NamedTemporaryFile(prefix="booktranslate-", suffix=suffix, delete=False)
+        handle.close()
+        destination = Path(handle.name)
     await _save_upload(file, destination)
+    source_persisted = False
 
     try:
+        if not is_local_storage:
+            await storage.put_bytes(stored_filename, await asyncio.to_thread(destination.read_bytes), content_type=file.content_type)
+        source_persisted = True
         document = parse_document(destination, suffix)
+    except HTTPException:
+        destination.unlink(missing_ok=True)
+        if source_persisted:
+            await storage.delete(stored_filename)
+        raise
     except Exception as exc:
         destination.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Document could not be parsed: {exc}",
-        ) from exc
+        if source_persisted:
+            await storage.delete(stored_filename)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Document could not be parsed: {exc}") from exc
 
     book = Book(
         title=(title or document.title or Path(original_filename).stem).strip(),
@@ -116,30 +126,24 @@ async def upload_book(
         status="parsing",
     )
     db.add(book)
-
     chapter_count = section_count = block_count = segment_count = 0
     asset_count = figure_count = table_count = caption_count = 0
-    asset_directory: Path | None = None
+    created_storage_keys: list[str] = [stored_filename]
 
     try:
         await db.flush()
-
         asset_models: dict[int, Asset] = {}
-        if document.assets:
-            asset_directory = Path(settings.upload_dir) / "assets" / str(book.id)
-            asset_directory.mkdir(parents=True, exist_ok=True)
-
         for normalized_asset in document.assets:
             asset_filename = f"{uuid.uuid4()}{_asset_suffix(normalized_asset.original_filename, normalized_asset.media_type)}"
-            relative_path = Path("assets") / str(book.id) / asset_filename
-            absolute_path = Path(settings.upload_dir) / relative_path
-            absolute_path.write_bytes(normalized_asset.data)
+            storage_key = (Path("assets") / str(book.id) / asset_filename).as_posix()
+            await storage.put_bytes(storage_key, normalized_asset.data, content_type=normalized_asset.media_type)
+            created_storage_keys.append(storage_key)
             asset = Asset(
                 book_id=book.id,
                 position=normalized_asset.position,
                 asset_type=normalized_asset.asset_type,
                 original_filename=normalized_asset.original_filename,
-                stored_filename=relative_path.as_posix(),
+                stored_filename=storage_key,
                 media_type=normalized_asset.media_type,
                 sha256=normalized_asset.sha256,
                 metadata_json=normalized_asset.metadata_json,
@@ -150,23 +154,13 @@ async def upload_book(
         await db.flush()
 
         for chapter_position, normalized_chapter in enumerate(document.chapters):
-            chapter = Chapter(
-                book_id=book.id,
-                position=chapter_position,
-                title=normalized_chapter.title,
-                source_text=normalized_chapter.source_text,
-            )
+            chapter = Chapter(book_id=book.id, position=chapter_position, title=normalized_chapter.title, source_text=normalized_chapter.source_text)
             db.add(chapter)
             await db.flush()
             chapter_count += 1
-
             section_models: dict[int, Section] = {}
             for normalized_section in normalized_chapter.sections:
-                parent = (
-                    section_models.get(normalized_section.parent_position)
-                    if normalized_section.parent_position is not None
-                    else None
-                )
+                parent = section_models.get(normalized_section.parent_position) if normalized_section.parent_position is not None else None
                 section = Section(
                     chapter_id=chapter.id,
                     parent_section_id=parent.id if parent else None,
@@ -182,11 +176,7 @@ async def upload_book(
 
             block_models: dict[int, Block] = {}
             for normalized_block in normalized_chapter.blocks:
-                section = (
-                    section_models.get(normalized_block.section_position)
-                    if normalized_block.section_position is not None
-                    else None
-                )
+                section = section_models.get(normalized_block.section_position) if normalized_block.section_position is not None else None
                 block = Block(
                     chapter_id=chapter.id,
                     section_id=section.id if section else None,
@@ -206,39 +196,16 @@ async def upload_book(
                     asset_position = normalized_block.metadata_json.get("asset_position")
                     asset = asset_models.get(asset_position) if isinstance(asset_position, int) else None
                     if asset is not None:
-                        db.add(
-                            Figure(
-                                block_id=block.id,
-                                asset_id=asset.id,
-                                alt_text=normalized_block.metadata_json.get("alt_text"),
-                                metadata_json={"source": normalized_block.metadata_json.get("source")},
-                            )
-                        )
+                        db.add(Figure(block_id=block.id, asset_id=asset.id, alt_text=normalized_block.metadata_json.get("alt_text"), metadata_json={"source": normalized_block.metadata_json.get("source")}))
                         figure_count += 1
                 elif normalized_block.block_type == "table":
                     cells = normalized_block.metadata_json.get("cells") or []
-                    db.add(
-                        DocumentTable(
-                            block_id=block.id,
-                            rows_count=len(cells),
-                            columns_count=max((len(row) for row in cells), default=0),
-                            data_json={"cells": cells},
-                            metadata_json={"style": normalized_block.metadata_json.get("style")},
-                        )
-                    )
+                    db.add(DocumentTable(block_id=block.id, rows_count=len(cells), columns_count=max((len(row) for row in cells), default=0), data_json={"cells": cells}, metadata_json={"style": normalized_block.metadata_json.get("style")}))
                     table_count += 1
                 elif normalized_block.block_type == "caption" and normalized_block.source_text:
                     target_position = normalized_block.metadata_json.get("target_block_position")
                     target = block_models.get(target_position) if isinstance(target_position, int) else None
-                    db.add(
-                        Caption(
-                            block_id=block.id,
-                            target_block_id=target.id if target else None,
-                            label=normalized_block.metadata_json.get("label"),
-                            source_text=normalized_block.source_text,
-                            metadata_json={"style": normalized_block.metadata_json.get("style")},
-                        )
-                    )
+                    db.add(Caption(block_id=block.id, target_block_id=target.id if target else None, label=normalized_block.metadata_json.get("label"), source_text=normalized_block.source_text, metadata_json={"style": normalized_block.metadata_json.get("style")}))
                     caption_count += 1
 
             drafts = segment_chapter(normalized_chapter)
@@ -246,17 +213,7 @@ async def upload_book(
             for draft in drafts:
                 block_position = draft.metadata_json.get("block_position")
                 source_block = block_models.get(block_position) if isinstance(block_position, int) else None
-                segment_models.append(
-                    Segment(
-                        chapter_id=chapter.id,
-                        block_id=source_block.id if source_block else None,
-                        position=draft.position,
-                        segment_type=draft.segment_type,
-                        source_text=draft.source_text,
-                        source_hash=draft.source_hash,
-                        metadata_json=draft.metadata_json,
-                    )
-                )
+                segment_models.append(Segment(chapter_id=chapter.id, block_id=source_block.id if source_block else None, position=draft.position, segment_type=draft.segment_type, source_text=draft.source_text, source_hash=draft.source_hash, metadata_json=draft.metadata_json))
             db.add_all(segment_models)
             segment_count += len(segment_models)
 
@@ -265,10 +222,15 @@ async def upload_book(
         await db.refresh(book)
     except Exception:
         await db.rollback()
-        destination.unlink(missing_ok=True)
-        if asset_directory is not None:
-            shutil.rmtree(asset_directory, ignore_errors=True)
+        for key in reversed(created_storage_keys):
+            try:
+                await storage.delete(key)
+            except Exception:
+                pass
         raise
+    finally:
+        if not is_local_storage:
+            destination.unlink(missing_ok=True)
 
     return UploadResponse(
         book_id=book.id,

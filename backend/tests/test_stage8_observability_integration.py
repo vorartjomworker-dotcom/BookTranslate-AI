@@ -31,6 +31,9 @@ async def _run() -> None:
             allowed = await client.get("/metrics", headers={"X-Metrics-Token": "metrics-secret"})
             assert allowed.status_code == 200
             assert "booktranslate_http_requests_total" in allowed.text
+            bearer = await client.get("/metrics", headers={"Authorization": "Bearer metrics-secret"})
+            assert bearer.status_code == 200
+            assert "booktranslate_http_requests_total" in bearer.text
 
             created = await client.post(
                 "/api/books",

@@ -1,0 +1,297 @@
+x-app-environment: &app-environment
+  APP_ENVIRONMENT: production
+  DATABASE_URL_FILE: /run/secrets/database_url
+  REDIS_URL_FILE: /run/secrets/redis_url
+  UPLOAD_DIR: /data/uploads
+  MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-100}
+  STORAGE_BACKEND: minio
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_BUCKET: ${S3_BUCKET:-booktranslate}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_ACCESS_KEY_FILE: /run/secrets/s3_access_key
+  S3_SECRET_KEY_FILE: /run/secrets/s3_secret_key
+  S3_USE_SSL: "false"
+  S3_ADDRESSING_STYLE: path
+  STORAGE_PRESIGN_TTL_SECONDS: ${STORAGE_PRESIGN_TTL_SECONDS:-120}
+  AUTH_REQUIRED: "true"
+  BOOTSTRAP_ADMIN_TOKEN_FILE: /run/secrets/bootstrap_admin_token
+  AUTH_SIGNING_SECRET_FILE: /run/secrets/auth_signing_secret
+  DOWNLOAD_TICKET_TTL_SECONDS: ${DOWNLOAD_TICKET_TTL_SECONDS:-120}
+  CORS_ORIGINS: https://${APP_DOMAIN}
+  OIDC_ENABLED: ${OIDC_ENABLED:-false}
+  OIDC_ISSUER: ${OIDC_ISSUER:-}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+  OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_client_secret
+  OIDC_REDIRECT_URI: https://${APP_DOMAIN}/api/auth/oidc/callback
+  OIDC_FRONTEND_REDIRECT_URI: https://${APP_DOMAIN}/auth/callback
+  OIDC_SCOPES: ${OIDC_SCOPES:-openid email profile}
+  OIDC_ROLE_CLAIM: ${OIDC_ROLE_CLAIM:-booktranslate_role}
+  OIDC_DEFAULT_ROLE: ${OIDC_DEFAULT_ROLE:-viewer}
+  AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-120}
+  OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  KIMI_API_KEY_FILE: /run/secrets/kimi_api_key
+  KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.moonshot.ai/v1}
+  GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+  GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+  AITUNNEL_API_KEY_FILE: /run/secrets/aitunnel_api_key
+  AITUNNEL_BASE_URL: ${AITUNNEL_BASE_URL:-https://api.aitunnel.ru/v1}
+  VISION_PROVIDER: ${VISION_PROVIDER:-openai}
+  VISION_MODEL: ${VISION_MODEL:-}
+  VISION_QUEUE_NAME: vision
+  VISION_WORKER_POLL_SECONDS: ${VISION_WORKER_POLL_SECONDS:-5}
+  VISION_JOB_RECOVERY_AGE_SECONDS: ${VISION_JOB_RECOVERY_AGE_SECONDS:-900}
+  FIGURE_RENDER_QUEUE_NAME: figure-render
+  FIGURE_RENDER_WORKER_POLL_SECONDS: ${FIGURE_RENDER_WORKER_POLL_SECONDS:-5}
+  FIGURE_RENDER_JOB_RECOVERY_AGE_SECONDS: ${FIGURE_RENDER_JOB_RECOVERY_AGE_SECONDS:-900}
+  FIGURE_FONT_PATH: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+  TRANSLATION_QUEUE_NAME: translation
+  TRANSLATION_WORKER_POLL_SECONDS: ${TRANSLATION_WORKER_POLL_SECONDS:-5}
+  TRANSLATION_JOB_RECOVERY_AGE_SECONDS: ${TRANSLATION_JOB_RECOVERY_AGE_SECONDS:-900}
+  WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-180}
+  WORKER_LEASE_RENEW_SECONDS: ${WORKER_LEASE_RENEW_SECONDS:-45}
+  METRICS_TOKEN_FILE: /run/secrets/metrics_token
+  AUDIT_ENABLED: "true"
+  OTEL_ENABLED: "true"
+  OTEL_SERVICE_NAME: booktranslate-api
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  SLO_AVAILABILITY_TARGET: ${SLO_AVAILABILITY_TARGET:-0.995}
+  SLO_P95_LATENCY_SECONDS: ${SLO_P95_LATENCY_SECONDS:-1.0}
+
+x-app-secrets: &app-secrets
+  - database_url
+  - redis_url
+  - bootstrap_admin_token
+  - auth_signing_secret
+  - oidc_client_secret
+  - s3_access_key
+  - s3_secret_key
+  - openai_api_key
+  - kimi_api_key
+  - gemini_api_key
+  - aitunnel_api_key
+  - metrics_token
+
+x-app-service: &app-service
+  build:
+    context: ../backend
+  environment: *app-environment
+  secrets: *app-secrets
+  volumes:
+    - uploads_data:/data/uploads
+  restart: unless-stopped
+  stop_grace_period: 45s
+  networks:
+    - app
+
+services:
+  proxy:
+    image: nginx:1.27-alpine
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./tls:/etc/nginx/tls:ro
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    networks:
+      - app
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        NEXT_PUBLIC_API_URL: https://${APP_DOMAIN}
+    restart: unless-stopped
+    networks:
+      - app
+
+  backend:
+    <<: *app-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=*"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  translation-worker:
+    <<: *app-service
+    command: ["python", "-m", "app.workers.translation_worker"]
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  vision-worker:
+    <<: *app-service
+    command: ["python", "-m", "app.workers.vision_worker"]
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  figure-render-worker:
+    <<: *app-service
+    command: ["python", "-m", "app.workers.figure_render_worker"]
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-booktranslate}
+      POSTGRES_USER: ${POSTGRES_USER:-booktranslate}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-booktranslate} -d ${POSTGRES_DB:-booktranslate}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - exec redis-server --appendonly yes --requirepass "$$(cat /run/secrets/redis_password)"
+    secrets:
+      - redis_password
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$(cat /run/secrets/redis_password)\" ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:latest}
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-minio/mc:latest}
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}";
+        mc mb --ignore-existing local/${S3_BUCKET:-booktranslate};
+        mc anonymous set none local/${S3_BUCKET:-booktranslate};
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    restart: "no"
+    networks:
+      - app
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.128.0
+    command: ["--config=/etc/otelcol/config.yml"]
+    volumes:
+      - ./otel-collector.yml:/etc/otelcol/config.yml:ro
+    restart: unless-stopped
+    networks:
+      - app
+
+  prometheus:
+    image: prom/prometheus:v3.4.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus_data:/prometheus
+    secrets:
+      - metrics_token
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - app
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
+  minio_data:
+  prometheus_data:
+
+secrets:
+  database_url:
+    file: ./secrets/database_url.txt
+  redis_url:
+    file: ./secrets/redis_url.txt
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  redis_password:
+    file: ./secrets/redis_password.txt
+  bootstrap_admin_token:
+    file: ./secrets/bootstrap_admin_token.txt
+  auth_signing_secret:
+    file: ./secrets/auth_signing_secret.txt
+  oidc_client_secret:
+    file: ./secrets/oidc_client_secret.txt
+  s3_access_key:
+    file: ./secrets/s3_access_key.txt
+  s3_secret_key:
+    file: ./secrets/s3_secret_key.txt
+  openai_api_key:
+    file: ./secrets/openai_api_key.txt
+  kimi_api_key:
+    file: ./secrets/kimi_api_key.txt
+  gemini_api_key:
+    file: ./secrets/gemini_api_key.txt
+  aitunnel_api_key:
+    file: ./secrets/aitunnel_api_key.txt
+  metrics_token:
+    file: ./secrets/metrics_token.txt

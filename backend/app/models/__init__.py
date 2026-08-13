@@ -9,6 +9,8 @@ from app.models.caption import Caption
 from app.models.chapter import Chapter
 from app.models.document_table import DocumentTable
 from app.models.figure import Figure
+from app.models.figure_render import FigureRender
+from app.models.figure_render_job import FigureRenderJob
 from app.models.glossary_term import GlossaryTerm
 from app.models.human_review import HumanReview
 from app.models.model_run import ModelRun
@@ -37,6 +39,8 @@ __all__ = [
     "Segment",
     "Asset",
     "Figure",
+    "FigureRender",
+    "FigureRenderJob",
     "DocumentTable",
     "Caption",
     "Translation",

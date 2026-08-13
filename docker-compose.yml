@@ -1,3 +1,61 @@
+x-backend-environment: &backend-environment
+  DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  UPLOAD_DIR: ${UPLOAD_DIR:-/data/uploads}
+  MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-100}
+  STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
+  S3_BUCKET: ${S3_BUCKET:-booktranslate}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+  S3_USE_SSL: ${S3_USE_SSL:-false}
+  S3_ADDRESSING_STYLE: ${S3_ADDRESSING_STYLE:-path}
+  STORAGE_PRESIGN_TTL_SECONDS: ${STORAGE_PRESIGN_TTL_SECONDS:-120}
+  AUTH_REQUIRED: ${AUTH_REQUIRED:-false}
+  BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:-}
+  AUTH_SIGNING_SECRET: ${AUTH_SIGNING_SECRET:-}
+  DOWNLOAD_TICKET_TTL_SECONDS: ${DOWNLOAD_TICKET_TTL_SECONDS:-120}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  OIDC_ENABLED: ${OIDC_ENABLED:-false}
+  OIDC_ISSUER: ${OIDC_ISSUER:-}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+  OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+  OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-http://localhost:8000/api/auth/oidc/callback}
+  OIDC_FRONTEND_REDIRECT_URI: ${OIDC_FRONTEND_REDIRECT_URI:-http://localhost:3000/auth/callback}
+  OIDC_SCOPES: ${OIDC_SCOPES:-openid email profile}
+  OIDC_ROLE_CLAIM: ${OIDC_ROLE_CLAIM:-booktranslate_role}
+  OIDC_DEFAULT_ROLE: ${OIDC_DEFAULT_ROLE:-viewer}
+  AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-120}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  KIMI_API_KEY: ${KIMI_API_KEY:-}
+  KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.moonshot.ai/v1}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+  AITUNNEL_API_KEY: ${AITUNNEL_API_KEY:-}
+  AITUNNEL_BASE_URL: ${AITUNNEL_BASE_URL:-https://api.aitunnel.ru/v1}
+  VISION_PROVIDER: ${VISION_PROVIDER:-openai}
+  VISION_MODEL: ${VISION_MODEL:-}
+  VISION_QUEUE_NAME: ${VISION_QUEUE_NAME:-vision}
+  VISION_WORKER_POLL_SECONDS: ${VISION_WORKER_POLL_SECONDS:-5}
+  VISION_JOB_RECOVERY_AGE_SECONDS: ${VISION_JOB_RECOVERY_AGE_SECONDS:-900}
+  FIGURE_RENDER_QUEUE_NAME: ${FIGURE_RENDER_QUEUE_NAME:-figure-render}
+  FIGURE_RENDER_WORKER_POLL_SECONDS: ${FIGURE_RENDER_WORKER_POLL_SECONDS:-5}
+  FIGURE_RENDER_JOB_RECOVERY_AGE_SECONDS: ${FIGURE_RENDER_JOB_RECOVERY_AGE_SECONDS:-900}
+  FIGURE_FONT_PATH: ${FIGURE_FONT_PATH:-/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf}
+  TRANSLATION_QUEUE_NAME: ${TRANSLATION_QUEUE_NAME:-translation}
+  TRANSLATION_WORKER_POLL_SECONDS: ${TRANSLATION_WORKER_POLL_SECONDS:-5}
+  TRANSLATION_JOB_RECOVERY_AGE_SECONDS: ${TRANSLATION_JOB_RECOVERY_AGE_SECONDS:-900}
+  WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-180}
+  WORKER_LEASE_RENEW_SECONDS: ${WORKER_LEASE_RENEW_SECONDS:-45}
+  METRICS_TOKEN: ${METRICS_TOKEN:-}
+  AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
+  APP_ENVIRONMENT: ${APP_ENVIRONMENT:-development}
+  OTEL_ENABLED: ${OTEL_ENABLED:-false}
+  OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-booktranslate-api}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+
 services:
   frontend:
     build:
@@ -14,44 +72,7 @@ services:
   backend:
     build:
       context: ./backend
-    environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      UPLOAD_DIR: ${UPLOAD_DIR:-/data/uploads}
-      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-100}
-      AUTH_REQUIRED: ${AUTH_REQUIRED:-false}
-      BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:-}
-      AUTH_SIGNING_SECRET: ${AUTH_SIGNING_SECRET:-}
-      DOWNLOAD_TICKET_TTL_SECONDS: ${DOWNLOAD_TICKET_TTL_SECONDS:-120}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
-      OIDC_ENABLED: ${OIDC_ENABLED:-false}
-      OIDC_ISSUER: ${OIDC_ISSUER:-}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
-      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
-      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-http://localhost:8000/api/auth/oidc/callback}
-      OIDC_FRONTEND_REDIRECT_URI: ${OIDC_FRONTEND_REDIRECT_URI:-http://localhost:3000/auth/callback}
-      OIDC_SCOPES: ${OIDC_SCOPES:-openid email profile}
-      OIDC_ROLE_CLAIM: ${OIDC_ROLE_CLAIM:-booktranslate_role}
-      OIDC_DEFAULT_ROLE: ${OIDC_DEFAULT_ROLE:-viewer}
-      AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-120}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      KIMI_API_KEY: ${KIMI_API_KEY:-}
-      KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.moonshot.ai/v1}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
-      AITUNNEL_API_KEY: ${AITUNNEL_API_KEY:-}
-      AITUNNEL_BASE_URL: ${AITUNNEL_BASE_URL:-https://api.aitunnel.ru/v1}
-      VISION_PROVIDER: ${VISION_PROVIDER:-openai}
-      VISION_MODEL: ${VISION_MODEL:-}
-      VISION_QUEUE_NAME: ${VISION_QUEUE_NAME:-vision}
-      VISION_WORKER_POLL_SECONDS: ${VISION_WORKER_POLL_SECONDS:-5}
-      VISION_JOB_RECOVERY_AGE_SECONDS: ${VISION_JOB_RECOVERY_AGE_SECONDS:-900}
-      TRANSLATION_QUEUE_NAME: ${TRANSLATION_QUEUE_NAME:-translation}
-      TRANSLATION_WORKER_POLL_SECONDS: ${TRANSLATION_WORKER_POLL_SECONDS:-5}
-      TRANSLATION_JOB_RECOVERY_AGE_SECONDS: ${TRANSLATION_JOB_RECOVERY_AGE_SECONDS:-900}
-      METRICS_TOKEN: ${METRICS_TOKEN:-}
-      AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
+    environment: *backend-environment
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports:
       - "8000:8000"
@@ -73,22 +94,7 @@ services:
   worker:
     build:
       context: ./backend
-    environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      UPLOAD_DIR: ${UPLOAD_DIR:-/data/uploads}
-      AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-120}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      KIMI_API_KEY: ${KIMI_API_KEY:-}
-      KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.moonshot.ai/v1}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
-      AITUNNEL_API_KEY: ${AITUNNEL_API_KEY:-}
-      AITUNNEL_BASE_URL: ${AITUNNEL_BASE_URL:-https://api.aitunnel.ru/v1}
-      TRANSLATION_QUEUE_NAME: ${TRANSLATION_QUEUE_NAME:-translation}
-      TRANSLATION_WORKER_POLL_SECONDS: ${TRANSLATION_WORKER_POLL_SECONDS:-5}
-      TRANSLATION_JOB_RECOVERY_AGE_SECONDS: ${TRANSLATION_JOB_RECOVERY_AGE_SECONDS:-900}
+    environment: *backend-environment
     command: ["python", "-m", "app.workers.translation_worker"]
     volumes:
       - uploads_data:/data/uploads
@@ -103,19 +109,23 @@ services:
   vision-worker:
     build:
       context: ./backend
-    environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      UPLOAD_DIR: ${UPLOAD_DIR:-/data/uploads}
-      AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-120}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      VISION_PROVIDER: ${VISION_PROVIDER:-openai}
-      VISION_MODEL: ${VISION_MODEL:-}
-      VISION_QUEUE_NAME: ${VISION_QUEUE_NAME:-vision}
-      VISION_WORKER_POLL_SECONDS: ${VISION_WORKER_POLL_SECONDS:-5}
-      VISION_JOB_RECOVERY_AGE_SECONDS: ${VISION_JOB_RECOVERY_AGE_SECONDS:-900}
+    environment: *backend-environment
     command: ["python", "-m", "app.workers.vision_worker"]
+    volumes:
+      - uploads_data:/data/uploads
+    restart: unless-stopped
+    stop_grace_period: 30s
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  figure-render-worker:
+    build:
+      context: ./backend
+    environment: *backend-environment
+    command: ["python", "-m", "app.workers.figure_render_worker"]
     volumes:
       - uploads_data:/data/uploads
     restart: unless-stopped
@@ -156,7 +166,37 @@ services:
       timeout: 3s
       retries: 10
 
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:latest}
+    profiles: ["object-storage"]
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-booktranslate}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio-dev-only-change-me}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-minio/mc:latest}
+    profiles: ["object-storage"]
+    depends_on:
+      - minio
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 2; done;
+        mc mb --ignore-existing local/${S3_BUCKET:-booktranslate};
+        mc anonymous set none local/${S3_BUCKET:-booktranslate};
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-booktranslate}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio-dev-only-change-me}
+
 volumes:
   postgres_data:
   redis_data:
   uploads_data:
+  minio_data:

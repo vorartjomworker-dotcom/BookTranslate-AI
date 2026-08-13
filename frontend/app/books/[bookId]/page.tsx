@@ -24,6 +24,7 @@ type Chapter = { id: string; position: number; title: string | null; segments: S
 type QA = { overall_score: number; translation_coverage: number; average_segment_quality: number; terminology_consistency: number; human_review_coverage: number; low_quality_segments: number; unresolved_reviews: number; terminology_issues: number; estimated_cost_usd: string };
 type Workbench = { book: { id: string; title: string; source_language: string; target_language: string; status: string; file_format: string | null }; chapters: Chapter[]; qa: QA | null; open_terminology_issues: number };
 type TerminologyIssue = { id: string; segment_id: string | null; source_term: string; expected_target_term: string; translated_text: string | null; issue_type: string; severity: string; status: string };
+type FigureRender = { id: string; asset_id: string; target_language: string; status: string; rendered_regions: number; total_regions: number; created_at: string };
 
 function scoreClass(score: number | null) {
   if (score === null) return "neutral";
@@ -42,6 +43,7 @@ export default function BookWorkspace() {
   const bookId = params.bookId;
   const [data, setData] = useState<Workbench | null>(null);
   const [issues, setIssues] = useState<TerminologyIssue[]>([]);
+  const [renders, setRenders] = useState<FigureRender[]>([]);
   const [chapterId, setChapterId] = useState<string | null>(null);
   const [segmentId, setSegmentId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -50,9 +52,10 @@ export default function BookWorkspace() {
   const [message, setMessage] = useState<string | null>(null);
 
   async function load() {
-    const [workspaceResponse, issuesResponse] = await Promise.all([
+    const [workspaceResponse, issuesResponse, rendersResponse] = await Promise.all([
       apiFetch(`/api/books/${bookId}/workbench`, { cache: "no-store" }),
       apiFetch(`/api/books/${bookId}/terminology-issues`, { cache: "no-store" }),
+      apiFetch(`/api/books/${bookId}/figure-renders`, { cache: "no-store" }),
     ]);
     if (!workspaceResponse.ok) {
       if (workspaceResponse.status === 401) throw new Error("Authentication required. Sign in from the Library page.");
@@ -61,6 +64,7 @@ export default function BookWorkspace() {
     const workspace: Workbench = await workspaceResponse.json();
     setData(workspace);
     if (issuesResponse.ok) setIssues(await issuesResponse.json());
+    if (rendersResponse.ok) setRenders(await rendersResponse.json());
     const firstChapter = workspace.chapters[0];
     const targetChapter = workspace.chapters.find((item) => item.id === chapterId) ?? firstChapter;
     if (targetChapter) {
@@ -116,8 +120,30 @@ export default function BookWorkspace() {
       const response = await apiFetch(`/api/books/${bookId}/vision-jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail ?? `Vision job failed with ${response.status}`);
-      setMessage(`Figure OCR queued as job ${payload.id}. Refresh after the vision worker completes.`);
+      setMessage(`Figure OCR queued as job ${payload.id}. Translate the new figure_text segments before rendering.`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not queue figure OCR"); }
+    finally { setBusy(false); }
+  }
+
+  async function runFigureRender() {
+    setBusy(true); setMessage(null);
+    try {
+      const response = await apiFetch(`/api/books/${bookId}/figure-render-jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail ?? `Figure render job failed with ${response.status}`);
+      setMessage(`Translated figure rendering queued as job ${payload.id}. Completed renders are embedded automatically in translated DOCX/EPUB exports.`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not queue translated figure rendering"); }
+    finally { setBusy(false); }
+  }
+
+  async function downloadRender(renderId: string) {
+    setBusy(true); setMessage(null);
+    try {
+      const response = await apiFetch(`/api/figure-renders/${renderId}/download-ticket`, { method: "POST" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail ?? `Render download failed with ${response.status}`);
+      window.location.href = payload.url;
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not prepare rendered figure download"); }
     finally { setBusy(false); }
   }
 
@@ -139,7 +165,9 @@ export default function BookWorkspace() {
   const allSegments = data.chapters.flatMap((item) => item.segments).filter((item) => item.status !== "superseded");
   const translated = allSegments.filter((item) => item.translated_text).length;
   const figureText = allSegments.filter((item) => item.type === "figure_text").length;
+  const translatedFigureText = allSegments.filter((item) => item.type === "figure_text" && item.translated_text).length;
   const total = allSegments.length;
+  const latestRender = renders[0] ?? null;
 
   return (
     <main className="workspace-shell">
@@ -151,6 +179,8 @@ export default function BookWorkspace() {
         <div className="workspace-actions">
           <Link className="button ghost" href="/reviews">Reviewer inbox</Link>
           <button className="button ghost" onClick={() => void runVision()} disabled={busy}>Run figure OCR</button>
+          <button className="button ghost" onClick={() => void runFigureRender()} disabled={busy || translatedFigureText === 0}>Render translated figures</button>
+          {latestRender ? <button className="button ghost" onClick={() => void downloadRender(latestRender.id)} disabled={busy}>Latest PNG</button> : null}
           <button className="button ghost" onClick={() => void rebuildQA()} disabled={busy}>Rebuild QA</button>
           <button className="button ghost" onClick={() => void download("translated.docx")} disabled={busy}>DOCX</button>
           <button className="button primary" onClick={() => void download("translated.epub")} disabled={busy}>EPUB</button>
@@ -160,7 +190,8 @@ export default function BookWorkspace() {
       <section className="qa-dashboard">
         <Metric label="Book quality" value={qa ? `${qa.overall_score.toFixed(1)}%` : "—"} detail={qa ? "weighted score" : "build QA report"} />
         <Metric label="Translation" value={qa ? `${qa.translation_coverage.toFixed(0)}%` : `${translated}/${total}`} detail="coverage" />
-        <Metric label="Figure OCR" value={`${figureText}`} detail="figure text segments" />
+        <Metric label="Figure OCR" value={`${translatedFigureText}/${figureText}`} detail="translated OCR regions" />
+        <Metric label="Figure renders" value={`${renders.length}`} detail={latestRender ? `${latestRender.rendered_regions}/${latestRender.total_regions} latest regions` : "none generated"} />
         <Metric label="Terminology" value={qa ? `${qa.terminology_consistency.toFixed(1)}%` : "—"} detail={`${data.open_terminology_issues} open issues`} />
         <Metric label="Human review" value={qa ? `${qa.human_review_coverage.toFixed(0)}%` : "—"} detail={`${qa?.unresolved_reviews ?? 0} pending`} />
         <Metric label="AI cost" value={qa ? `$${Number(qa.estimated_cost_usd).toFixed(4)}` : "—"} detail="translation estimate" />

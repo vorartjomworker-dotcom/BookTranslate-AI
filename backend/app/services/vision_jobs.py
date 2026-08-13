@@ -8,6 +8,7 @@ from pathlib import Path
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.asset import Asset
 from app.models.block import Block
 from app.models.figure import Figure
@@ -15,19 +16,14 @@ from app.models.segment import Segment
 from app.models.vision_extraction import VisionExtraction
 from app.models.vision_job import VisionJob
 from app.services.job_queue import enqueue_job
+from app.storage.base import StorageBackend
+from app.storage.factory import create_storage
+from app.storage.local import LocalStorage
 from app.vision.gateway import VisionGateway
 
 
 def _hash_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _safe_asset_path(upload_dir: str | Path, stored_filename: str) -> Path:
-    root = Path(upload_dir).resolve()
-    candidate = (root / stored_filename).resolve()
-    if candidate != root and root not in candidate.parents:
-        raise ValueError("Asset path escapes upload directory")
-    return candidate
 
 
 async def create_vision_job(
@@ -62,11 +58,7 @@ async def create_vision_job(
 
 async def recover_vision_jobs(db: AsyncSession, *, queue_name: str, stale_after_seconds: int) -> int:
     stale_cutoff = datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)
-    rows = list(
-        (
-            await db.execute(select(VisionJob).where(VisionJob.status.in_(["queued", "running"])))
-        ).scalars().all()
-    )
+    rows = list((await db.execute(select(VisionJob).where(VisionJob.status.in_(["queued", "running"])))).scalars().all())
     recovered = 0
     for job in rows:
         if job.status == "running" and job.updated_at and job.updated_at > stale_cutoff:
@@ -108,9 +100,7 @@ async def _create_figure_segments(
         for segment in existing:
             if segment.source_hash not in new_hashes and segment.status != "superseded":
                 segment.status = "superseded"
-        max_position = (
-            await db.execute(select(func.max(Segment.position)).where(Segment.chapter_id == block.chapter_id))
-        ).scalar_one()
+        max_position = (await db.execute(select(func.max(Segment.position)).where(Segment.chapter_id == block.chapter_id))).scalar_one()
         next_position = int(max_position or 0) + 1
         existing_hashes = {segment.source_hash for segment in existing if segment.status != "superseded"}
         for index, region in enumerate(source_regions):
@@ -153,17 +143,15 @@ async def _process_asset(
     provider: str,
     model: str,
     prompt: str,
-    upload_dir: str | Path,
+    storage: StorageBackend,
 ) -> VisionExtraction:
     if not (asset.media_type or "").startswith("image/"):
         raise ValueError("Asset is not an image")
-    path = _safe_asset_path(upload_dir, asset.stored_filename)
-    if not path.is_file():
-        raise FileNotFoundError(f"Asset file not found: {asset.stored_filename}")
+    image_bytes = await storage.get_bytes(asset.stored_filename)
     result = await gateway.extract(
         provider=provider,
         model=model,
-        image_bytes=path.read_bytes(),
+        image_bytes=image_bytes,
         media_type=asset.media_type or "image/png",
         prompt=prompt,
     )
@@ -181,13 +169,7 @@ async def _process_asset(
     )
     db.add(extraction)
     await db.flush()
-    await _create_figure_segments(
-        db,
-        extraction=extraction,
-        asset=asset,
-        regions=result.regions,
-        fallback_text=result.text,
-    )
+    await _create_figure_segments(db, extraction=extraction, asset=asset, regions=result.regions, fallback_text=result.text)
     return extraction
 
 
@@ -196,13 +178,17 @@ async def process_vision_job(
     gateway: VisionGateway,
     job_id: uuid.UUID,
     *,
-    upload_dir: str | Path,
+    storage: StorageBackend | None = None,
+    upload_dir: str | Path | None = None,
 ) -> VisionJob:
     job = await db.get(VisionJob, job_id)
     if job is None:
         raise LookupError("Vision job not found")
     if job.status in {"completed", "completed_with_warnings", "cancelled", "failed"}:
         return job
+
+    if storage is None:
+        storage = LocalStorage(upload_dir) if upload_dir is not None else create_storage(settings)
 
     query = select(Asset).where(Asset.book_id == job.book_id)
     if job.asset_id is not None:
@@ -225,7 +211,7 @@ async def process_vision_job(
                 provider=job.provider,
                 model=job.model,
                 prompt=job.prompt or "Extract visible text from this figure.",
-                upload_dir=upload_dir,
+                storage=storage,
             )
             job.completed_assets += 1
         except Exception as exc:

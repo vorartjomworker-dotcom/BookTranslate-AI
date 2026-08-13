@@ -7,6 +7,7 @@ from app.api.auth import router as auth_router
 from app.api.book_qa import router as book_qa_router
 from app.api.books import router as books_router
 from app.api.export import router as export_router
+from app.api.figure_renders import router as figure_renders_router
 from app.api.glossary import router as glossary_router
 from app.api.jobs import router as jobs_router
 from app.api.model_policies import router as model_policies_router
@@ -21,9 +22,11 @@ from app.api.workbench import router as workbench_router
 from app.core.config import settings
 from app.db import check_database
 from app.http_middleware import SecurityObservabilityMiddleware
+from app.observability import configure_tracing
 from app.redis_client import check_redis
 
-app = FastAPI(title=settings.app_name, version="0.9.0")
+app = FastAPI(title=settings.app_name, version="0.10.0")
+configure_tracing(app=app)
 
 app.add_middleware(SecurityObservabilityMiddleware)
 app.add_middleware(
@@ -42,6 +45,7 @@ app.include_router(glossary_router)
 app.include_router(translations_router)
 app.include_router(jobs_router)
 app.include_router(vision_router)
+app.include_router(figure_renders_router)
 app.include_router(qa_router)
 app.include_router(reviews_router)
 app.include_router(reviewer_router)
