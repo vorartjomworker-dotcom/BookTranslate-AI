@@ -1,0 +1,25 @@
+BookTranslate AI has been rendered for release {{ .Release.Name }}.
+
+Ingress:
+{{- if .Values.ingress.enabled }}
+  https://{{ .Values.ingress.host }}
+{{- else }}
+  disabled
+{{- end }}
+
+Required external dependencies:
+  - PostgreSQL referenced by Secret key {{ .Values.secrets.keys.databaseUrl }}
+  - Redis referenced by Secret key {{ .Values.secrets.keys.redisUrl }}
+  - S3-compatible object storage
+  - Kubernetes Secret {{ .Values.secrets.existingSecret }} managed outside this chart
+
+Operational checks:
+  kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl get jobs -l app.kubernetes.io/component=migration
+  kubectl get hpa
+{{- if .Values.keda.enabled }}
+  kubectl get scaledobjects
+{{- end }}
+
+SCIM base URL when enabled:
+  https://{{ .Values.ingress.host }}/scim/v2
