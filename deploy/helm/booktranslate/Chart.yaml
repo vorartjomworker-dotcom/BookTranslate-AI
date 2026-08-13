@@ -1,0 +1,7 @@
+apiVersion: v2
+name: booktranslate
+version: 0.1.0
+appVersion: "0.11.0"
+description: Production Kubernetes chart for BookTranslate AI
+home: https://github.com/vorartjomworker-dotcom/BookTranslate-AI
+type: application
