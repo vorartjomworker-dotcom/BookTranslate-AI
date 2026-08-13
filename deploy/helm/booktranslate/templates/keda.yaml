@@ -1,0 +1,45 @@
+{{- if .Values.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "booktranslate.fullname" . }}-redis
+  labels:
+    {{- include "booktranslate.labels" . | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: {{ .Values.secrets.existingSecret | quote }}
+      key: {{ .Values.keda.redisPasswordSecretKey | quote }}
+---
+{{- range $name, $worker := .Values.workers }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "booktranslate.fullname" $ }}-{{ $name | lower }}-worker
+  labels:
+    {{- include "booktranslate.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name | lower }}-worker
+spec:
+  scaleTargetRef:
+    name: {{ include "booktranslate.fullname" $ }}-{{ $name | lower }}-worker
+  pollingInterval: {{ $.Values.keda.pollingInterval }}
+  cooldownPeriod: {{ $.Values.keda.cooldownPeriod }}
+  minReplicaCount: {{ $.Values.keda.minReplicaCount }}
+  maxReplicaCount: {{ $.Values.keda.maxReplicaCount }}
+  fallback:
+    failureThreshold: 3
+    replicas: {{ $worker.replicas }}
+  triggers:
+    - type: redis
+      metadata:
+        address: {{ $.Values.keda.redisAddress | quote }}
+        listName: {{ printf "booktranslate:queue:%s" $worker.queueName | quote }}
+        listLength: {{ $.Values.keda.listLength | quote }}
+        activationListLength: {{ $.Values.keda.activationListLength | quote }}
+        databaseIndex: {{ $.Values.keda.redisDatabaseIndex | quote }}
+        enableTLS: {{ $.Values.keda.redisEnableTLS | quote }}
+      authenticationRef:
+        name: {{ include "booktranslate.fullname" $ }}-redis
+---
+{{- end }}
+{{- end }}
