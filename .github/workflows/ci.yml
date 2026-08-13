@@ -53,6 +53,9 @@ jobs:
           cache-dependency-path: |
             backend/requirements.txt
             backend/requirements-dev.txt
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.2.0
       - run: pip install -r requirements-dev.txt
       - run: python -m compileall app alembic tests
       - name: Validate database migrations
@@ -60,15 +63,28 @@ jobs:
       - name: Validate operations scripts and Compose
         shell: bash
         run: |
-          bash -n ../scripts/backup.sh ../scripts/restore.sh
+          bash -n ../scripts/backup.sh ../scripts/restore.sh ../scripts/restore_drill.sh
           docker compose -f ../docker-compose.yml config -q
+      - name: Validate Helm chart and queue autoscaling templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm lint ../deploy/helm/booktranslate
+          helm template booktranslate ../deploy/helm/booktranslate > /tmp/booktranslate-helm.yaml
+          helm template booktranslate ../deploy/helm/booktranslate \
+            --set keda.enabled=true \
+            --set-string keda.redisAddress=redis.example.test:6379 \
+            > /tmp/booktranslate-helm-keda.yaml
+          grep -q 'kind: Deployment' /tmp/booktranslate-helm.yaml
+          grep -q 'kind: ScaledObject' /tmp/booktranslate-helm-keda.yaml
+          grep -q 'booktranslate:queue:translation' /tmp/booktranslate-helm-keda.yaml
       - name: Validate production deployment
         shell: bash
         run: |
           set -euo pipefail
           secret_dir=../deploy/secrets
           mkdir -p "$secret_dir"
-          for name in database_url redis_url postgres_password redis_password bootstrap_admin_token auth_signing_secret oidc_client_secret s3_access_key s3_secret_key openai_api_key kimi_api_key gemini_api_key aitunnel_api_key metrics_token; do
+          for name in database_url redis_url postgres_password redis_password bootstrap_admin_token auth_signing_secret oidc_client_secret scim_bearer_token s3_access_key s3_secret_key openai_api_key kimi_api_key gemini_api_key aitunnel_api_key metrics_token; do
             printf 'ci-placeholder\n' > "$secret_dir/$name.txt"
           done
           printf 'postgresql+asyncpg://booktranslate:ci@postgres:5432/booktranslate\n' > "$secret_dir/database_url.txt"
