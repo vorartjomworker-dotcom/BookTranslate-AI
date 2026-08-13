@@ -20,3 +20,20 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
   if (token) headers.set("Authorization", `Bearer ${token}`);
   return fetch(path.startsWith("http") ? path : `${apiUrl}${path}`, { ...init, headers });
 }
+
+export async function getDownloadUrl(bookId: string, format: "docx" | "translated.docx" | "translated.epub") {
+  const response = await apiFetch(`/api/books/${bookId}/export-ticket`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ format }),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.detail ?? `Download ticket failed with ${response.status}`);
+  const path = String(payload.url || "");
+  return path.startsWith("http") ? path : `${apiUrl}${path}`;
+}
+
+export function oidcLoginUrl(returnTo?: string) {
+  const target = returnTo ?? (typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : "");
+  return `${apiUrl}/api/auth/oidc/login?return_to=${encodeURIComponent(target)}`;
+}
