@@ -1,0 +1,35 @@
+groups:
+  - name: booktranslate-slo
+    rules:
+      - alert: BookTranslateAvailabilityBelowSLO
+        expr: |
+          (
+            sum(rate(booktranslate_http_requests_total{status!~"5.."}[5m]))
+            /
+            sum(rate(booktranslate_http_requests_total[5m]))
+          ) < 0.995
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: BookTranslate availability is below the 99.5% SLO
+
+      - alert: BookTranslateP95LatencyAboveSLO
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(booktranslate_http_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: BookTranslate p95 API latency is above 1 second
+
+      - alert: BookTranslateWorkerLeaseConflicts
+        expr: sum(rate(booktranslate_job_lease_conflicts_total[5m])) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Sustained worker lease contention detected
