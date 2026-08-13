@@ -96,6 +96,8 @@ async def _validate_id_token(id_token: str, *, nonce: str, discovery: dict, clie
     )
     if claims.get("nonce") != nonce:
         raise ValueError("OIDC nonce mismatch")
+    if claims.get("email_verified") is False:
+        raise ValueError("OIDC email is explicitly unverified")
     return claims
 
 
@@ -123,6 +125,8 @@ async def complete_oidc_login(
             )
             response.raise_for_status()
             claims.update(response.json())
+        if claims.get("email_verified") is False:
+            raise ValueError("OIDC email is explicitly unverified")
     finally:
         if owned:
             await http.aclose()
