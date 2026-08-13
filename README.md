@@ -1,6 +1,6 @@
 # BookTranslate AI
 
-AI-powered platform for structured technical-book translation with persistent document reconstruction, provider-neutral AI orchestration, durable workers, multi-model QA, human review, figure OCR/redraw, SSO/RBAC, object storage and browser translator/reviewer workspaces.
+AI-powered platform for structured technical-book translation with persistent DOCX/EPUB reconstruction, provider-neutral AI orchestration, durable workers, multi-model QA, human review, Vision/OCR, translated figure reconstruction, SSO/SCIM, object storage and production deployment tooling.
 
 ## Current status
 
@@ -8,115 +8,144 @@ AI-powered platform for structured technical-book translation with persistent do
 - **Stage 2 — Document Engine ✅** `Book → Chapter → Section → Block → Segment`, assets, figures, tables, captions, DOCX/EPUB parsing and reconstruction.
 - **Stage 3 — Translation Engine ✅** Translation history, ModelRun audit, prompts, glossary, Translation Memory, Context Builder and OpenAI/Kimi/Gemini/AITUNNEL gateway.
 - **Stage 4 — Jobs, Workers & Multi-model QA ✅** durable Redis jobs, retries/recovery, progress, multi-model QA and translated DOCX.
-- **Stage 5 — Human Review, Book QA & Adaptive Routing ✅** approval/edit/reject, terminology audit, provider policies, budgets and application-side rate controls.
-- **Stage 6 — EPUB Fidelity & Translator Workbench ✅** translated EPUB, hyperlink/formula fidelity metadata, source↔target browser editor and QA dashboard.
-- **Stage 7 — Notes, RBAC & Reviewer Workflow ✅** first-class footnote/endnote translation, roles, assignments, comments, version diff and reviewer inbox.
-- **Stage 8 — Vision/OCR, SSO, Security & Operations ✅** figure OCR, OIDC, full API perimeter, signed downloads, Prometheus, audit and backup/restore foundation.
-- **Stage 9 — Figure Redraw, Object Storage & Production Telemetry ✅** translated figure variants, S3/MinIO, distributed worker leases, OpenTelemetry, SLO definitions and hardened TLS deployment baseline.
+- **Stage 5 — Human Review, Book QA & Routing ✅** approval/edit/reject, terminology audit, provider policies, budgets and application rate controls.
+- **Stage 6 — EPUB Fidelity & Translator Workbench ✅** translated EPUB, hyperlink/formula fidelity metadata, browser editor and QA dashboard.
+- **Stage 7 — Notes, RBAC & Reviewer Workflow ✅** footnote/endnote translation, roles, assignments, comments, version diff and reviewer inbox.
+- **Stage 8 — Vision/OCR, SSO, Security & Operations ✅** figure OCR, OIDC, API perimeter, signed downloads, Prometheus, audit and backup/restore.
+- **Stage 9 — Figure Redraw, S3/MinIO & Telemetry ✅** translated figure variants, distributed leases, OpenTelemetry/SLO and TLS production Compose.
+- **Stage 10 — Inpainting, Adaptive Scheduling, SCIM & Kubernetes ✅** OpenCV image reconstruction, vector SVG sidecars, provider feedback-aware routing, rotating browser sessions, SCIM 2.0, Helm/KEDA, restore drills and versioned release/deployment workflows.
 
-## Stage 9 architecture
-
-```text
-Original figure asset (immutable)
-        ↓
-VisionJob / Vision worker
-        ↓
-OCR regions + normalized bbox
-        ↓
-Segment(type=figure_text)
-        ↓
-Translation → Multi-model QA → Human Review
-        ↓
-FigureRenderJob / render worker
-        ↓
-Pillow bbox renderer + DejaVu Sans
-        ↓
-immutable translated PNG variant
-        ↓
-LocalStorage or S3/MinIO
-        ↓
-translated DOCX / EPUB automatically selects
-latest completed render for the target language
-```
-
-Figure rendering is fingerprinted and idempotent. The fingerprint includes the source asset SHA-256, language, figure-text segment identities, source hashes, translations and bounding boxes. Re-running the same render does not create a duplicate variant.
-
-The renderer estimates each OCR region background from its corners, chooses a contrast foreground, wraps/fits translated text into the region and records regions that may overflow. It never overwrites the original asset.
-
-## Storage
-
-The application uses a single `StorageBackend` contract:
+## End-to-end architecture
 
 ```text
-LocalStorage
-S3Storage ──► AWS S3 / MinIO / S3-compatible object stores
+DOCX / EPUB
+    ↓
+Document Engine
+    ↓
+Book → Chapter → Section → Block → Segment
+    ↓
+Translation Memory + Glossary + Context Builder
+    ↓
+Adaptive Model Router
+    ├─ static priority/cost/RPM/TPM/concurrency
+    └─ provider feedback: remaining quota / reset / Retry-After cooldown
+    ↓
+Translator → Reviewer → Critic → Finalizer
+    ↓
+Multi-model QA → Human Review
+    ↓
+Translated DOCX / EPUB
+
+Figure Asset (immutable)
+    ↓
+Vision/OCR → figure_text + normalized bbox
+    ↓
+Translation / QA / Human Review
+    ↓
+FigureRenderJob
+    ├─ overlay
+    ├─ OpenCV Telea inpaint
+    └─ vector: inpainted PNG + editable SVG text layer
+    ↓
+S3 / MinIO / LocalStorage
+    ↓
+Translated document export
 ```
 
-Local storage remains the default and is backward compatible with existing books. New S3/MinIO deployments store source documents, parsed assets and rendered figures by object key. S3 downloads can use native short-lived presigned URLs.
+## Advanced translated figures
 
-Example local configuration:
+`POST /api/books/{book_id}/figure-render-jobs` accepts:
 
-```env
-STORAGE_BACKEND=local
-UPLOAD_DIR=/data/uploads
+```json
+{"render_mode":"overlay"}
+{"render_mode":"inpaint"}
+{"render_mode":"vector"}
 ```
 
-Example MinIO configuration:
+`overlay` preserves the Stage 9 bounded background replacement renderer. `inpaint` creates an OCR-region mask and reconstructs the background with OpenCV Telea before fitting translated text. `vector` uses the same cleaned background, produces the compatible translated PNG and stores an editable SVG sidecar whose text remains vector text.
 
-```env
-STORAGE_BACKEND=minio
-S3_ENDPOINT_URL=http://minio:9000
-S3_BUCKET=booktranslate
-S3_REGION=us-east-1
-S3_ACCESS_KEY_FILE=/run/secrets/s3_access_key
-S3_SECRET_KEY_FILE=/run/secrets/s3_secret_key
-S3_USE_SSL=false
-S3_ADDRESSING_STYLE=path
-```
+The source asset is never overwritten. Render fingerprints include source SHA-256, target language, render mode, segment hashes, translations and bounding boxes, so identical reruns are idempotent.
 
-Development MinIO is optional:
-
-```bash
-docker compose --profile object-storage up --build
-```
-
-## Distributed worker leases
-
-Translation, Vision and figure-render workers acquire an owner-specific Redis lease after dequeue. Leases use `SET NX EX`, renew through an owner-checked Lua heartbeat and release only when the same owner still holds the lease. A crashed worker stops renewing; the lease expires and normal recovery can resume the job. Duplicate dequeue/recovery attempts cannot execute the same job concurrently while the lease is alive.
-
-Metrics:
+Vector API:
 
 ```text
-booktranslate_job_lease_conflicts_total{queue}
-booktranslate_job_active_leases{queue}
+POST /api/figure-renders/{render_id}/vector-download-ticket
+GET  /api/figure-renders/{render_id}/vector-download
 ```
 
-## OpenTelemetry and SLO
+## Provider-feedback-aware adaptive routing
 
-When `OTEL_ENABLED=true`, API and worker processes export OTLP traces. HTTPX and SQLAlchemy are instrumented and API responses expose `X-Trace-ID` when a valid trace is active. Audit metadata links mutation events to the trace ID without recording request bodies.
-
-Default SLO baseline:
+The router still enforces configured model policy, priority, cost, RPM, TPM and concurrency. Stage 10 also normalizes provider response headers such as remaining request/token capacity, reset durations and `Retry-After`.
 
 ```text
-Availability     99.5%
-p95 API latency  <= 1.0 s
+Provider response
+    ↓
+normalized rate-limit feedback
+    ↓
+short-lived Redis provider/model state
+    ↓
+capacity / cooldown admission check
+    ↓
+adaptive candidate selection
 ```
 
-`GET /api/ops/slo` returns the active targets and PromQL. The production baseline includes Prometheus rules for availability, p95 latency and sustained lease contention.
+Successful responses update capacity feedback. HTTP 429 / Retry-After responses put only the affected provider/model into a temporary cooldown; other configured models remain eligible.
 
-## Authentication and secrets
+## Browser sessions, OIDC and SCIM
 
-Application roles remain:
+OIDC no longer rotates a single user-wide application token. A browser login creates an independent `UserSession` with:
+
+- short-lived access token;
+- rotating refresh token;
+- independent expiry/revocation;
+- user-agent/IP audit metadata;
+- configurable maximum active sessions per user.
+
+Refresh-token rotation uses a PostgreSQL row lock so one old refresh token cannot be successfully rotated by two concurrent requests.
+
+Session API:
+
+```text
+POST   /api/auth/session/refresh
+GET    /api/auth/sessions
+DELETE /api/auth/sessions/{session_id}
+POST   /api/auth/sessions/revoke-all
+```
+
+SCIM 2.0 is independently protected by `SCIM_BEARER_TOKEN` and supports user provisioning/deprovisioning and deterministic BookTranslate role groups:
+
+```text
+GET    /scim/v2/ServiceProviderConfig
+GET    /scim/v2/ResourceTypes
+GET    /scim/v2/Schemas
+GET    /scim/v2/Users
+POST   /scim/v2/Users
+GET    /scim/v2/Users/{id}
+PUT    /scim/v2/Users/{id}
+PATCH  /scim/v2/Users/{id}
+DELETE /scim/v2/Users/{id}
+GET    /scim/v2/Groups
+GET    /scim/v2/Groups/{id}
+PATCH  /scim/v2/Groups/{id}
+```
+
+SCIM deactivation revokes the affected user's active browser sessions. Roles remain:
 
 ```text
 admin | reviewer | translator | viewer
 ```
 
-OIDC uses Authorization Code Flow with discovery, JWKS signature, issuer, audience, expiry and nonce validation. Application tokens are stored only as SHA-256 hashes.
+## Storage
 
-Sensitive settings support `*_FILE` so production deployments can mount Docker/Kubernetes/external-secret values instead of exposing them directly in application environment variables. Supported file-backed values include database/Redis URLs, signing/bootstrap secrets, OIDC client secret, S3 credentials, provider keys and the metrics token.
+The application uses a provider-neutral async contract:
 
-Never commit provider keys, database credentials, OIDC secrets, TLS private keys or production `.env` files.
+```text
+StorageBackend
+├─ LocalStorage
+└─ S3Storage → AWS S3 / MinIO / S3-compatible stores
+```
+
+Local remains the development default. Production can use S3-compatible storage for source documents, parsed assets and generated figure variants. Native S3 presigned downloads are explicit opt-in; private MinIO can stay behind application signed-ticket proxy downloads.
 
 ## Local run
 
@@ -125,14 +154,11 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Windows PowerShell:
+Optional development MinIO:
 
-```powershell
-Copy-Item .env.example .env
-docker compose up --build
+```bash
+docker compose --profile object-storage up --build
 ```
-
-Local defaults keep `AUTH_REQUIRED=false` and `STORAGE_BACKEND=local`.
 
 Services:
 
@@ -141,169 +167,127 @@ Services:
 - readiness: `http://localhost:8000/health`
 - liveness: `http://localhost:8000/liveness`
 - metrics: `http://localhost:8000/metrics`
-- translation queue: `translation`
-- Vision queue: `vision`
-- figure-render queue: `figure-render`
+- translation queue: `booktranslate:queue:translation`
+- Vision queue: `booktranslate:queue:vision`
+- figure render queue: `booktranslate:queue:figure-render`
 
-## Production baseline
+## Production targets
 
-See [`deploy/README.md`](deploy/README.md).
+### Single host
 
-The included production Compose stack provides:
+See [`deploy/README.md`](deploy/README.md). The production Compose baseline provides TLS Nginx, private PostgreSQL/Redis/MinIO/backend/workers, mounted secrets, Prometheus and OTLP collector.
 
-- Nginx TLS termination and HTTP→HTTPS redirect;
-- no public PostgreSQL, Redis, MinIO, backend or worker ports;
-- mounted application secrets through `/run/secrets/*`;
-- MinIO/S3-first application storage;
-- separate translation, Vision and figure-render workers;
-- Redis job leases;
-- OTLP collector;
-- Prometheus with protected internal scraping;
-- security headers and public `/metrics` denial;
-- Prometheus bound only to `127.0.0.1:9090`.
+### Kubernetes / Helm
 
-TLS material belongs in `deploy/tls/` and secret files in `deploy/secrets/`; both directories prevent credential/key files from being committed.
+See [`deploy/helm/booktranslate/README.md`](deploy/helm/booktranslate/README.md).
 
-## Figure workflow in Workbench
+The Helm chart deploys stateless application components and expects external PostgreSQL, Redis and S3-compatible object storage. It includes:
 
-The browser Workbench exposes:
+- Alembic `pre-install,pre-upgrade` migration Job;
+- backend/frontend Deployments and Services;
+- independent translation, Vision and figure-render worker Deployments;
+- HPA for API/frontend;
+- optional KEDA Redis-list queue autoscaling for workers;
+- PodDisruptionBudgets;
+- ingress-only NetworkPolicy;
+- TLS Ingress routing for `/api`, `/scim` and frontend;
+- optional authenticated Prometheus `ServiceMonitor`;
+- externally managed Kubernetes Secret only — the chart does not create production credentials.
+
+Example validation:
+
+```bash
+helm lint deploy/helm/booktranslate
+helm template booktranslate deploy/helm/booktranslate
+helm template booktranslate deploy/helm/booktranslate \
+  --set keda.enabled=true \
+  --set-string keda.redisAddress=redis.example.internal:6379
+```
+
+## Release and deployment automation
+
+`.github/workflows/release.yml` publishes a versioned release from a `v*` tag or explicit manual version:
 
 ```text
-Run figure OCR
+validate version + Helm
     ↓
-translate/review figure_text segments
+build backend/frontend
     ↓
-Render translated figures
+GHCR images + provenance + SBOM
     ↓
-Latest PNG preview/download
+OCI Helm chart + SHA-256
     ↓
-DOCX / EPUB export
+GitHub Release
 ```
 
-Completed translated figure variants are automatically embedded in translated document exports.
+`.github/workflows/deploy-production.yml` is manual and bound to the protected GitHub `production` environment. It requires an external `KUBE_CONFIG_B64`, pulls a previously published OCI chart and runs `helm upgrade --install --atomic --wait`. Cluster credentials are never stored in the repository.
 
-## API summary
+## Restore drills
 
-### Authentication / users / SSO
+Normal backup/restore scripts cover PostgreSQL, Redis and persistent uploaded/generated files. Stage 10 adds `scripts/restore_drill.sh`, which performs a destructive verification:
+
+1. create independent PostgreSQL, Redis and file markers;
+2. create a backup;
+3. destroy all three live markers;
+4. restore the backup;
+5. verify all three markers reappear;
+6. clean up drill state.
+
+`.github/workflows/restore-drill.yml` can run manually and is scheduled weekly. It uploads restore evidence and tears down the isolated local recovery stack after the test.
+
+## Observability and availability
+
+OpenTelemetry instruments API, HTTPX and SQLAlchemy. API responses expose `X-Trace-ID` when tracing is active, while audit records link mutation events to trace IDs without storing request bodies.
+
+Default SLO baseline:
 
 ```text
-POST /api/auth/bootstrap
-GET  /api/auth/me
-GET  /api/auth/oidc/config
-GET  /api/auth/oidc/login
-GET  /api/auth/oidc/callback
-POST /api/admin/users
-GET  /api/admin/users
-POST /api/admin/users/{user_id}/role
-POST /api/admin/users/{user_id}/rotate-token
+Availability     99.5%
+p95 API latency  <= 1.0 s
 ```
 
-### Documents / Workbench / export
+Workers use owner-specific Redis leases with TTL/heartbeat/recovery. Prometheus exposes HTTP, queue-lease and SLO signals.
+
+## Database migrations
+
+Latest migration:
 
 ```text
-POST /api/books
-GET  /api/books
-GET  /api/books/{book_id}
-POST /api/books/upload
-GET  /api/books/{book_id}/workbench
-POST /api/translations/{translation_id}/editor-version
-POST /api/books/{book_id}/export-ticket
-GET  /api/books/{book_id}/export/docx
-GET  /api/books/{book_id}/export/translated.docx
-GET  /api/books/{book_id}/export/translated.epub
+20260813_0010
 ```
 
-Supported source formats: `.docx`, `.epub`.
+It adds:
 
-### Vision / OCR
+- `user_sessions`;
+- `app_users.scim_external_id` and `scim_managed`;
+- `figure_renders.render_mode`;
+- `figure_render_jobs.render_mode`.
 
-```text
-POST /api/books/{book_id}/vision-jobs
-POST /api/assets/{asset_id}/vision-jobs
-GET  /api/vision-jobs/{job_id}
-GET  /api/books/{book_id}/vision-jobs
-GET  /api/assets/{asset_id}/vision-extractions
-```
+## CI contract
 
-### Translated figure rendering
+Every feature/main CI run validates:
 
-```text
-POST /api/books/{book_id}/figure-render-jobs
-GET  /api/figure-render-jobs/{job_id}
-GET  /api/books/{book_id}/figure-renders
-POST /api/figure-renders/{render_id}/download-ticket
-GET  /api/figure-renders/{render_id}/download
-```
+- real PostgreSQL and Redis;
+- Python compileall;
+- Alembic `0001 → 0010`;
+- local Docker Compose;
+- backup/restore/restore-drill shell syntax;
+- production Compose with temporary CI-only placeholder secret files;
+- Nginx syntax with an ephemeral self-signed TLS certificate;
+- Helm lint/template without KEDA;
+- Helm template with KEDA and real BookTranslate queue names;
+- complete backend pytest suite including sessions, SCIM, provider cooldown routing and OpenCV/vector rendering;
+- Next.js production build.
 
-### Translation jobs
+CI makes no live LLM/Vision call and does not use production S3, real OIDC/SCIM identity providers, production TLS private keys, Kubernetes credentials or real deployment secrets.
 
-```text
-POST /api/segments/{segment_id}/translate
-POST /api/segments/{segment_id}/translate/pipeline
-POST /api/books/{book_id}/translation-jobs
-POST /api/chapters/{chapter_id}/translation-jobs
-GET  /api/translation-jobs/{job_id}
-GET  /api/books/{book_id}/translation-jobs
-POST /api/translation-jobs/{job_id}/cancel
-```
-
-### QA / review
-
-```text
-POST /api/translations/{translation_id}/versions/{version_id}/qa
-POST /api/translations/{translation_id}/versions/{version_id}/reviews
-POST /api/human-reviews/{review_id}/resolve
-GET  /api/reviews/inbox
-POST /api/human-reviews/{review_id}/assign
-POST /api/human-reviews/{review_id}/comments
-GET  /api/translations/{translation_id}/versions/diff
-POST /api/books/{book_id}/qa-report
-GET  /api/books/{book_id}/qa-report/latest
-```
-
-### Operations
-
-```text
-GET /metrics
-GET /api/ops/status
-GET /api/ops/slo
-GET /api/admin/audit-events
-```
-
-`/metrics` accepts either `X-Metrics-Token` or an equivalent Bearer credential, allowing Prometheus to use a mounted credentials file.
-
-## Tests and CI
-
-GitHub Actions now:
-
-- starts real PostgreSQL and Redis;
-- applies Alembic `0001 → 0009`;
-- compiles backend, migrations and tests;
-- validates local Compose and backup/restore shell syntax;
-- validates the hardened production Compose with temporary non-secret CI placeholder files;
-- runs `nginx -t` with an ephemeral self-signed certificate;
-- tests local and mocked-S3 storage contracts;
-- creates a real PNG, renders translated OCR text into it and verifies translated export asset substitution;
-- verifies render idempotence;
-- verifies owner-safe Redis lease acquire/renew/release behavior;
-- verifies mounted secret-file overrides;
-- retains all document, translation, QA, OIDC, Vision, audit and security tests from earlier stages;
-- builds the Next.js production frontend.
-
-CI performs no live LLM/Vision, production S3, OIDC provider or external telemetry calls and contains no real deployment credentials.
-
-## Current boundaries
+## Important boundaries
 
 - DOCX/EPUB reconstruction is structural rather than pixel-identical.
-- Vision bounding boxes are model outputs; publication-critical figures require human review.
-- Figure redraw V1 uses bounded background replacement + text fitting, not semantic inpainting or vector-layout reconstruction.
-- Rotated/curved/handwritten text is not specially rendered in V1.
-- Generated figure variants are PNG even when the source asset used another raster format.
-- S3/MinIO bucket lifecycle/versioning/replication policies belong to infrastructure configuration.
-- The bundled OTLP collector uses a debug exporter by default; connect it to a durable tracing backend in production.
-- The production Compose baseline is single-host. Horizontal autoscaling/HA should move PostgreSQL/object storage to managed services or a clustered deployment.
-- Provider-specific rate-limit response headers are not yet fed back into the global scheduler.
-
-## Next engineering stage
-
-A future Stage 10 can focus on advanced figure inpainting/vector reconstruction, Kubernetes/Helm/autoscaling, provider-header-aware admission control, SCIM/session refresh management, event/webhook integrations and automated restore drills.
+- OCR bounding boxes remain model-derived; publication-critical figures require human review.
+- Inpainting V1 is deterministic OpenCV Telea region reconstruction, not generative semantic image synthesis.
+- SVG vector mode preserves translated text as vector text but does not reconstruct arbitrary original vector primitives or complex typographic geometry.
+- Rotated, curved and handwritten text are not specially typeset.
+- SCIM V1 covers application users and BookTranslate role groups; enterprise directory extensions/entitlements beyond this model are not implemented.
+- Kubernetes stateful dependencies are intentionally external. HA, backups, replication and lifecycle controls for PostgreSQL/Redis/S3 belong to infrastructure configuration.
+- Release/deploy workflows are production-ready automation foundations, but an actual deployment still requires real registry/cluster/secret-manager configuration outside this repository.
