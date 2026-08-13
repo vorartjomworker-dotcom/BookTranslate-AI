@@ -17,6 +17,7 @@ figure { margin: 1rem 0; }
 figcaption, .caption { color: #555; font-size: 0.92em; }
 .inline-links { font-size: 0.85em; color: #555; }
 .math-source { overflow-x: auto; }
+aside[epub|type~="footnote"], aside[epub|type~="endnote"] { font-size: 0.9em; border-top: 1px solid #ddd; margin-top: 1rem; padding-top: 0.5rem; }
 """.strip()
 
 
@@ -29,7 +30,9 @@ def _inline_suffix(metadata: dict) -> str:
             href = html.escape(str(link.get("href") or ""), quote=True)
             label = html.escape(str(link.get("text") or href))
             if href:
-                rendered.append(f'<a href="{href}">{label}</a>')
+                epub_type = html.escape(str(link.get("epub_type") or ""), quote=True)
+                type_attr = f' epub:type="{epub_type}"' if epub_type else ""
+                rendered.append(f'<a href="{href}"{type_attr}>{label}</a>')
         if rendered:
             parts.append('<span class="inline-links">' + " · ".join(rendered) + "</span>")
     for expression in metadata.get("mathml") or []:
@@ -56,6 +59,10 @@ def _render_block(block: NormalizedBlock, assets: dict[int, tuple[str, str]]) ->
         return f"<{tag}><li>{text}{suffix}</li></{tag}>"
     if block.block_type == "caption":
         return f'<p class="caption">{text}{suffix}</p>'
+    if block.block_type in {"footnote", "endnote"}:
+        note_id = html.escape(str(metadata.get("note_id") or f"{block.block_type}-{block.position}"), quote=True)
+        epub_type = "footnote" if block.block_type == "footnote" else "endnote"
+        return f'<aside epub:type="{epub_type}" id="{note_id}"><p>{text}{suffix}</p></aside>'
     if block.block_type == "table":
         rows = metadata.get("cells") or []
         body = []
@@ -106,9 +113,10 @@ def reconstruct_epub(source: NormalizedDocument, output_path: Path, *, language:
         item = epub.EpubHtml(title=title, file_name=f"chapter-{index + 1}.xhtml", lang=language)
         body = [f"<h1>{html.escape(title)}</h1>"]
         body.extend(_render_block(block, asset_map) for block in sorted(chapter.blocks, key=lambda value: value.position))
-        item.content = "<html xmlns='http://www.w3.org/1999/xhtml'><head><title>{}</title></head><body>{}</body></html>".format(
-            html.escape(title), "".join(body)
-        )
+        item.content = (
+            "<html xmlns='http://www.w3.org/1999/xhtml' xmlns:epub='http://www.idpf.org/2007/ops'>"
+            "<head><title>{}</title></head><body>{}</body></html>"
+        ).format(html.escape(title), "".join(body))
         item.add_item(style)
         book.add_item(item)
         spine.append(item)
