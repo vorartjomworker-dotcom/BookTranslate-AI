@@ -133,6 +133,7 @@ async def build_book_qa_report(
         ).all()
     )
     final_versions = [row[0] for row in final_rows]
+    translation_ids = list({row[1].id for row in final_rows})
     scored = [float(item.quality_score) for item in final_versions if item.quality_score is not None]
     average_quality = round(sum(scored) / len(scored), 2) if scored else 0.0
     low_quality = sum(1 for score in scored if score < low_quality_threshold)
@@ -143,21 +144,23 @@ async def build_book_qa_report(
         target_language=target_language,
     )
 
-    version_ids = [item.id for item in final_versions]
     review_rows: list[HumanReview] = []
-    if version_ids:
+    if translation_ids:
         review_rows = list(
             (
                 await db.execute(
-                    select(HumanReview).where(HumanReview.translation_version_id.in_(version_ids))
+                    select(HumanReview)
+                    .join(
+                        TranslationVersion,
+                        HumanReview.translation_version_id == TranslationVersion.id,
+                    )
+                    .where(TranslationVersion.translation_id.in_(translation_ids))
                 )
             ).scalars().all()
         )
     unresolved_reviews = sum(1 for item in review_rows if item.status == "pending")
     resolved_reviews = sum(1 for item in review_rows if item.status in {"approved", "edited", "rejected"})
-    human_review_coverage = (
-        round(resolved_reviews * 100 / len(review_rows), 2) if review_rows else 100.0
-    )
+    human_review_coverage = round(resolved_reviews * 100 / len(review_rows), 2) if review_rows else 100.0
 
     telemetry = (
         await db.execute(
