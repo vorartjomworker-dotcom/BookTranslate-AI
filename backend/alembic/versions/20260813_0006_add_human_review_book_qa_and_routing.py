@@ -18,7 +18,20 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    op.add_column("translation_jobs", sa.Column("input_tokens", sa.Integer(), server_default="0", nullable=False))
+    op.add_column("translation_jobs", sa.Column("output_tokens", sa.Integer(), server_default="0", nullable=False))
+    op.add_column("translation_jobs", sa.Column("estimated_cost_usd", sa.Numeric(14, 6), server_default="0", nullable=False))
+    op.add_column("model_runs", sa.Column("translation_job_id", postgresql.UUID(as_uuid=True), nullable=True))
     op.add_column("model_runs", sa.Column("estimated_cost_usd", sa.Numeric(precision=14, scale=6), nullable=True))
+    op.create_foreign_key(
+        "fk_model_runs_translation_job_id",
+        "model_runs",
+        "translation_jobs",
+        ["translation_job_id"],
+        ["id"],
+        ondelete="SET NULL",
+    )
+    op.create_index("ix_model_runs_translation_job_id", "model_runs", ["translation_job_id"], unique=False)
 
     op.create_table(
         "provider_model_policies",
@@ -141,4 +154,10 @@ def downgrade() -> None:
     op.drop_index("ix_provider_model_policies_model", table_name="provider_model_policies")
     op.drop_index("ix_provider_model_policies_provider", table_name="provider_model_policies")
     op.drop_table("provider_model_policies")
+    op.drop_index("ix_model_runs_translation_job_id", table_name="model_runs")
+    op.drop_constraint("fk_model_runs_translation_job_id", "model_runs", type_="foreignkey")
     op.drop_column("model_runs", "estimated_cost_usd")
+    op.drop_column("model_runs", "translation_job_id")
+    op.drop_column("translation_jobs", "estimated_cost_usd")
+    op.drop_column("translation_jobs", "output_tokens")
+    op.drop_column("translation_jobs", "input_tokens")

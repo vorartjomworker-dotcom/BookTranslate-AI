@@ -24,6 +24,12 @@ class ModelRun(Base, TimestampMixin):
         nullable=True,
         index=True,
     )
+    translation_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("translation_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     prompt_version_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("prompt_versions.id", ondelete="SET NULL"),
@@ -46,5 +52,6 @@ class ModelRun(Base, TimestampMixin):
 
     segment = relationship("Segment", back_populates="model_runs")
     translation = relationship("Translation", back_populates="model_runs", foreign_keys=[translation_id])
+    translation_job = relationship("TranslationJob")
     prompt_version = relationship("PromptVersion", back_populates="model_runs")
     translation_versions = relationship("TranslationVersion", back_populates="model_run")
