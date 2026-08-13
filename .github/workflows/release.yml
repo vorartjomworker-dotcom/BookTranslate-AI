@@ -1,0 +1,126 @@
+name: Production Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Version tag to publish, for example v0.11.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/booktranslate-ai-backend
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/booktranslate-ai-frontend
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.2.0
+      - name: Validate release version and Helm chart
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          helm lint deploy/helm/booktranslate
+          helm template booktranslate deploy/helm/booktranslate \
+            --set backend.image.tag="$RELEASE_TAG" \
+            --set frontend.image.tag="$RELEASE_TAG" \
+            > rendered-manifests.yaml
+          test -s rendered-manifests.yaml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rendered-kubernetes-manifests
+          path: rendered-manifests.yaml
+          retention-days: 14
+
+  publish-images:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          provenance: true
+          sbom: true
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ env.RELEASE_TAG }}
+            ${{ env.BACKEND_IMAGE }}:sha-${{ github.sha }}
+      - name: Build and publish frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          provenance: true
+          sbom: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ env.RELEASE_TAG }}
+            ${{ env.FRONTEND_IMAGE }}:sha-${{ github.sha }}
+
+  publish-chart-and-release:
+    needs: [validate, publish-images]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.2.0
+      - name: Package and push Helm chart
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          mkdir -p dist
+          helm lint deploy/helm/booktranslate
+          helm package deploy/helm/booktranslate \
+            --version "$VERSION" \
+            --app-version "$VERSION" \
+            --destination dist
+          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          helm push "dist/booktranslate-$VERSION.tgz" "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER}/charts"
+          sha256sum "dist/booktranslate-$VERSION.tgz" > "dist/booktranslate-$VERSION.tgz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: booktranslate-helm-chart
+          path: dist/
+          retention-days: 30
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* --target "$GITHUB_SHA" --generate-notes --title "BookTranslate AI $RELEASE_TAG"
+          fi
