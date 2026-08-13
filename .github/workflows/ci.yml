@@ -57,6 +57,11 @@ jobs:
       - run: python -m compileall app alembic tests
       - name: Validate database migrations
         run: alembic upgrade head
+      - name: Validate operations scripts and Compose
+        shell: bash
+        run: |
+          bash -n ../scripts/backup.sh ../scripts/restore.sh
+          docker compose -f ../docker-compose.yml config -q
       - name: Run backend tests
         shell: bash
         run: |
