@@ -1,3 +1,4 @@
+from app.models.app_user import AppUser
 from app.models.asset import Asset
 from app.models.base import Base
 from app.models.block import Block
@@ -12,6 +13,7 @@ from app.models.human_review import HumanReview
 from app.models.model_run import ModelRun
 from app.models.prompt_version import PromptVersion
 from app.models.provider_model_policy import ProviderModelPolicy
+from app.models.review_comment import ReviewComment
 from app.models.section import Section
 from app.models.segment import Segment
 from app.models.terminology_issue import TerminologyIssue
@@ -23,6 +25,7 @@ from app.models.translation_version import TranslationVersion
 
 __all__ = [
     "Base",
+    "AppUser",
     "Book",
     "Chapter",
     "Section",
@@ -41,6 +44,7 @@ __all__ = [
     "TranslationJob",
     "TranslationQAResult",
     "HumanReview",
+    "ReviewComment",
     "BookQAReport",
     "TerminologyIssue",
     "ProviderModelPolicy",
