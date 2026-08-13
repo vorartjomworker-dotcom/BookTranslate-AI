@@ -57,3 +57,17 @@ class Book(Base, TimestampMixin):
         passive_deletes=True,
         order_by="VisionJob.created_at",
     )
+    figure_renders = relationship(
+        "FigureRender",
+        back_populates="book",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="FigureRender.created_at",
+    )
+    figure_render_jobs = relationship(
+        "FigureRenderJob",
+        back_populates="book",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="FigureRenderJob.created_at",
+    )
