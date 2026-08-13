@@ -39,7 +39,9 @@ def _bearer_token(request: Request) -> str | None:
 def _is_signed_download_path(path: str) -> bool:
     if path.startswith("/api/books/") and "/export/" in path:
         return True
-    return path.startswith("/api/figure-renders/") and path.endswith("/download")
+    return path.startswith("/api/figure-renders/") and (
+        path.endswith("/download") or path.endswith("/vector-download")
+    )
 
 
 class SecurityObservabilityMiddleware(BaseHTTPMiddleware):
