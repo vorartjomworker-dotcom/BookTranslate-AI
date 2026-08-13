@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.security import verify_download_ticket
 from app.db import AsyncSessionLocal
 from app.models.audit_event import AuditEvent
+from app.observability import current_trace_id
 
 REQUESTS = Counter("booktranslate_http_requests_total", "HTTP requests", ["method", "route", "status"])
 LATENCY = Histogram("booktranslate_http_request_duration_seconds", "HTTP request latency", ["method", "route"])
@@ -34,8 +35,10 @@ def _bearer_token(request: Request) -> str | None:
     return None
 
 
-def _is_export_path(path: str) -> bool:
-    return path.startswith("/api/books/") and "/export/" in path
+def _is_signed_download_path(path: str) -> bool:
+    if path.startswith("/api/books/") and "/export/" in path:
+        return True
+    return path.startswith("/api/figure-renders/") and path.endswith("/download")
 
 
 class SecurityObservabilityMiddleware(BaseHTTPMiddleware):
@@ -52,7 +55,7 @@ class SecurityObservabilityMiddleware(BaseHTTPMiddleware):
                     request.state.actor = actor
                 else:
                     download_token = request.query_params.get("download_token")
-                    if request.method == "GET" and download_token and _is_export_path(request.url.path):
+                    if request.method == "GET" and download_token and _is_signed_download_path(request.url.path):
                         try:
                             verify_download_ticket(download_token, path=request.url.path)
                             request.state.download_authorized = True
@@ -70,6 +73,9 @@ class SecurityObservabilityMiddleware(BaseHTTPMiddleware):
 
             response = await call_next(request)
             response.headers["X-Request-ID"] = request_id
+            trace_id = current_trace_id()
+            if trace_id:
+                response.headers["X-Trace-ID"] = trace_id
             route = getattr(request.scope.get("route"), "path", request.url.path)
             REQUESTS.labels(request.method, route, str(response.status_code)).inc()
             LATENCY.labels(request.method, route).observe(time.perf_counter() - started)
@@ -86,7 +92,7 @@ class SecurityObservabilityMiddleware(BaseHTTPMiddleware):
                                 resource_type="api",
                                 resource_id=request.url.path,
                                 request_id=request_id,
-                                metadata_json={"status_code": response.status_code},
+                                metadata_json={"status_code": response.status_code, "trace_id": trace_id},
                             )
                         )
                         await db.commit()
