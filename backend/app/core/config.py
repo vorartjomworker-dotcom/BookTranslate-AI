@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     s3_secret_key_file: str | None = None
     s3_use_ssl: bool = False
     s3_addressing_style: str = "path"
+    s3_presign_downloads: bool = False
     storage_presign_ttl_seconds: int = 120
 
     auth_required: bool = False
