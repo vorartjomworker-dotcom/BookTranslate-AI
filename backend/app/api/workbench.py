@@ -7,7 +7,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import DevActor, require_min_role
 from app.db import get_db
+from app.models.app_user import AppUser
 from app.models.book import Book
 from app.models.book_qa_report import BookQAReport
 from app.models.chapter import Chapter
@@ -39,7 +41,11 @@ async def _latest_final_version(db: AsyncSession, translation_id: uuid.UUID) -> 
 
 
 @router.get("/api/books/{book_id}/workbench")
-async def get_book_workbench(book_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict:
+async def get_book_workbench(
+    book_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _actor: AppUser | DevActor = Depends(require_min_role("viewer")),
+) -> dict:
     book = await db.get(Book, book_id)
     if book is None:
         raise HTTPException(status_code=404, detail="Book not found")
@@ -127,26 +133,32 @@ async def get_book_workbench(book_id: uuid.UUID, db: AsyncSession = Depends(get_
 
 
 @router.post("/api/translations/{translation_id}/editor-version")
-async def save_editor_version(translation_id: uuid.UUID, payload: EditorSaveRequest, db: AsyncSession = Depends(get_db)) -> dict:
+async def save_editor_version(
+    translation_id: uuid.UUID,
+    payload: EditorSaveRequest,
+    db: AsyncSession = Depends(get_db),
+    actor: AppUser | DevActor = Depends(require_min_role("translator")),
+) -> dict:
     translation = await db.get(Translation, translation_id)
     if translation is None:
         raise HTTPException(status_code=404, detail="Translation not found")
     current = await _latest_final_version(db, translation_id)
     if current is None:
         raise HTTPException(status_code=409, detail="Translation has no final version to edit")
+    reviewer_id = payload.reviewer_id or getattr(actor, "email", None) or "workbench-editor"
     try:
         review = await request_human_review(
             db,
             version_id=current.id,
-            reviewer_id=payload.reviewer_id,
+            reviewer_id=reviewer_id,
             notes=payload.notes,
-            metadata={"source": "workbench"},
+            metadata={"source": "workbench", "actor": reviewer_id},
         )
         review, selected = await resolve_human_review(
             db,
             review_id=review.id,
             action="edit",
-            reviewer_id=payload.reviewer_id,
+            reviewer_id=reviewer_id,
             edited_text=payload.text,
             notes=payload.notes,
         )
